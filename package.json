@@ -1,0 +1,18 @@
+{
+    "name": "@stapleport/bridge-relayer",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "description": "Stapleport 跨链桥 relayer 客户端（零公网面，cron 驱动；接入方自托管，换自己的 key 即成通道 authority）",
+    "scripts": {
+        "dev": "wrangler dev --local",
+        "deploy": "wrangler deploy",
+        "sync-registry": "node scripts/sync-registry.mjs"
+    },
+    "dependencies": {
+        "viem": "^2.21.0"
+    },
+    "devDependencies": {
+        "wrangler": "^4.0.0"
+    }
+}

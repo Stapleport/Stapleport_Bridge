@@ -1,0 +1,61 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stapleport-bridge",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-01",
+
+  // 零公网面：只有 cron 触发 + GET /health。relayer 不需要任何入站路由——
+  // 它是「主动出站」的执行客户端：监听事件 → 签名发交易（骨架照抄 SelfSweep）。
+  "workers_dev": false,
+
+  // 每分钟一轮：正向（源链 Deposit → stapleport mint）+ 反向（stapleport BurnRequest → 源链 release）
+  // + harvest 回血。想更快改 "*/1" 之外可自行加密（多实例同 key 幂等安全，gas 白烧而已）
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // 公开配置（非敏感）。密钥只有一把 BRIDGE_RELAYER_PRIVATE_KEY（= 通道 authority 地址），
+  // 走 wrangler secret，绝不放这里：wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY
+  "vars": {
+    // ---- hub（stapleport 端）----
+    // zmBridge 地址（registry.json 为底，可用 ZMBRIDGE / RPC_URL_HUB 覆盖）
+    "HUB_CHAIN_ID": "78753",
+    "ZMBRIDGE": "",
+
+    // ---- 通道清单（JSON 数组）：本 key 作为 authority 服务的通道 ----
+    // chainIndex 用链注册表颁发的索引；srcDecimals 用于精度换算（→18 无损放大 / 18→src floor）
+    // covered=true 的通道执行前做 gas 覆盖预检（第三方链必开；stapleport 侧无所谓）
+    "CHANNELS": "[]",
+
+    // ---- 源链清单（JSON 对象）：chainIndex → { rpc?, confirmations? } ----
+    // rpc 缺省读 registry.json，registry 外的链必须给；confirmations 防重组（野链按尽调定，默认 3）
+    "SRC_CHAINS": "{}",
+
+    // ---- harvest 回血 ----
+    // 源链 pendingFee（折 native 估值）超过阈值才 harvest，"0" = 每轮都尝试
+    "HARVEST_THRESHOLD_NATIVE": "0",
+    "HARVEST_SLIP_BPS": "100", // 换汇滑点保护 1%
+
+    // ---- 行为 ----
+    // tick 内存锁：防同 isolate 重叠
+    "TICK_LOCK_SECONDS": "55",
+    // 单 op 重试上限：超过后告警并保持 pending（人工处理/轮换 authority 后自动恢复）
+    "MAX_ATTEMPTS": "10",
+    // covered 通道 gas 覆盖边际（预估 gas × 价格 × 此倍数 ≤ relayer 余额才执行）
+    "GAS_MARGIN_X10": "30",
+    // true = 只打印将发的交易，不广播
+    "DRY_RUN": "false",
+    // 可选：事件告警 webhook（POST JSON）
+    "WEBHOOK_URL": ""
+  },
+
+  // ---- D1（必绑）：游标 + ops 幂等表。双保险的第二层（第一层在合约幂等）----
+  // wrangler d1 create stapleport-bridge-db 后把 id 填进来再 deploy
+  "d1_databases": [
+    {
+      "binding": "BRIDGE_DB",
+      "database_name": "stapleport-bridge-db",
+      "database_id": "REPLACE_WITH_D1_ID"
+    }
+  ]
+}

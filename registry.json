@@ -1,0 +1,42 @@
+{
+  "_comment": "由 sync-registry.mjs 生成——勿手改",
+  "chains": {
+    "31337": {
+      "meta": {
+        "rpc": "http://127.0.0.1:8545"
+      },
+      "BridgeVault": {
+        "address": "0x16E781D26B1AA8Ac8827eEC245F5d19721257d0e",
+        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+      },
+      "ZMBridge": {
+        "address": "0x11e6b4FEB417Ff8a6AcFB45D7254A8faFcaB01fC",
+        "p_address": "0x11e6b4FEB417Ff8a6AcFB45D7254A8faFcaB01fC"
+      },
+      "StakePool": {
+        "address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F",
+        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+      },
+      "ChainRegistry": {
+        "address": "0x60FB019a3C221a4d691B418Df58150569f7D6Bc4",
+        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+      },
+      "ZMBridgedToken": {
+        "address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53",
+        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+      },
+      "WBNB": {
+        "address": "0x0b42B142087FAFcac1a1C3B90a61F86da7B64835",
+        "p_address": "0x0b42B142087FAFcac1a1C3B90a61F86da7B64835"
+      },
+      "PancakeFactory": {
+        "address": "0x8404C8eD0e39bF4c6B9c4e188a8C1aa9044DA764",
+        "p_address": "0x8404C8eD0e39bF4c6B9c4e188a8C1aa9044DA764"
+      },
+      "WETH9": {
+        "address": "0xB7588D82dFff0E872E3F595ea9AEDDe2d052E9b7",
+        "p_address": "0xB7588D82dFff0E872E3F595ea9AEDDe2d052E9b7"
+      }
+    }
+  }
+}
