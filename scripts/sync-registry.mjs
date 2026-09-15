@@ -1,12 +1,12 @@
 // 从合约仓 deployments/all.json 同步桥相关合约地址与裁剪版 ABI 到本仓 registry.json。
-// 用法：node scripts/sync-registry.mjs [all.json 路径，缺省 ../../../Stapleport_hardhat/deployments/all.json]
+// 用法：node scripts/sync-registry.mjs [all.json 路径，缺省 ../Stapleport_hardhat/deployments/all.json]
 // 只搬运白名单合约，ABI 只保留 worker 用到的条目——包体与攻击面都最小化。
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const allPath = resolve(here, '..', process.argv[2] || '../../../Stapleport_hardhat/deployments/all.json');
+const allPath = resolve(here, '..', process.argv[2] || '../Stapleport_hardhat/deployments/all.json');
 const outPath = join(here, '..', 'registry.json');
 
 const all = JSON.parse(readFileSync(allPath, 'utf8'));
