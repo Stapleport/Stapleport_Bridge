@@ -1,7 +1,7 @@
 // 双向中继主循环。
 //
-// 正向：源链 Vault.Deposit(seq) → stapleport ZMBridge.executeMint（仅通道 authority 可调）
-// 反向：stapleport ZMBridge.BurnRequest(seq) → 源链 Vault.executeRelease（outId=seq，跨链唯一）
+// 正向：源链 Vault.Deposit(seq) → stapleport StapleportBridge.executeMint（仅通道 authority 可调）
+// 反向：stapleport StapleportBridge.BurnRequest(seq) → 源链 Vault.executeRelease（outId=seq，跨链唯一）
 //
 // 可靠性设计：
 // - 游标存 D1（cursors 表），首轮只落基线不处理历史（照 SelfSweep monitor 口径）
@@ -10,7 +10,7 @@
 // - 广播后不强等回执：op 保持 pending，下一轮先用链上幂等位对账（minted/released）
 //   命中即 done；未命中且 attempts 未超限则重发
 import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters, parseAbiItem, getEventSelector } from 'viem';
-import { vaultAbi, zmBridgeAbi, DEPOSIT_EVENT, BURN_EVENT } from './lib/abi.js';
+import { vaultAbi, stplBridgeAbi, DEPOSIT_EVENT, BURN_EVENT } from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex, hexToBigInt } from './lib/rpc.js';
 import { sendTx, nativeBalance } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp } from './lib/store.js';
@@ -76,19 +76,19 @@ async function forwardChannel(env, cfg, wallet, db, ch, src) {
             await finishOp(db, 'mint', key, 'already-minted');
             continue;
         }
-        const zmAmount = to18(ev.args.amount, ch.srcDecimals);
-        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${zmAmount} → ${ev.args.recipient}`);
+        const stplAmount = to18(ev.args.amount, ch.srcDecimals);
+        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${stplAmount} → ${ev.args.recipient}`);
         if (cfg.dryRun) {
             await finishOp(db, 'mint', key, 'dry-run');
             continue;
         }
         const data = encodeFunctionData({
-            abi: zmBridgeAbi, functionName: 'executeMint',
-            args: [BigInt(ch.chainIndex), seq, ch.zmToken, ev.args.recipient, zmAmount],
+            abi: stplBridgeAbi, functionName: 'executeMint',
+            args: [BigInt(ch.chainIndex), seq, ch.stplToken, ev.args.recipient, stplAmount],
         });
         let txHash = null;
         try {
-            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.zmBridge, data }, cfg);
+            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.stplBridge, data }, cfg);
             console.log(`[bridge] executeMint 广播: ${txHash ?? '(dry)'}`);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, key, seq, txHash));
         } catch (e) {
@@ -119,9 +119,9 @@ function mintedSettle(env, cfg, wallet, db, ch, key, seq, txHash) {
 
 async function isMinted(cfg, ch, seq) {
     const key = channelKeyOf(ch.chainIndex, ch.srcToken);
-    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.zmBridge,
-        encodeFunctionData({ abi: zmBridgeAbi, functionName: 'minted', args: [key, seq] }));
-    return decodeFunctionResult({ abi: zmBridgeAbi, functionName: 'minted', data: raw });
+    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
+        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'minted', args: [key, seq] }));
+    return decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'minted', data: raw });
 }
 
 // pending 重试：链上幂等位命中 → done；未命中且未超限 → 重发（参数从 Vault.deposits(seq) 现读，
@@ -145,10 +145,10 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
             });
             if (token.toLowerCase() !== String(ch.srcToken).toLowerCase()) continue;
             const data = encodeFunctionData({
-                abi: zmBridgeAbi, functionName: 'executeMint',
-                args: [BigInt(ch.chainIndex), seq, ch.zmToken, recipient, to18(amount, ch.srcDecimals)],
+                abi: stplBridgeAbi, functionName: 'executeMint',
+                args: [BigInt(ch.chainIndex), seq, ch.stplToken, recipient, to18(amount, ch.srcDecimals)],
             });
-            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.zmBridge, data }, cfg);
+            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.stplBridge, data }, cfg);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, row.op_key, seq, txHash));
         } catch (e) {
             const exhausted = await failOp(db, 'mint', row.op_key, e, cfg.maxAttempts);
@@ -163,7 +163,7 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
 
 export async function relayReverse(env, cfg, wallet, db) {
     const hub = cfg.hub;
-    if (!hub.rpcUrl || !hub.zmBridge) return;
+    if (!hub.rpcUrl || !hub.stplBridge) return;
     try {
         await retryPendingReleases(env, cfg, wallet, db);
         const head = await latestBlock(hub.rpcUrl);
@@ -178,7 +178,7 @@ export async function relayReverse(env, cfg, wallet, db) {
         if (safeTo <= cursor) return;
 
         const logs = await rpc(hub.rpcUrl, 'eth_getLogs', [{
-            address: hub.zmBridge,
+            address: hub.stplBridge,
             topics: [BURN_TOPIC],
             fromBlock: toHex(cursor + 1n),
             toBlock: toHex(safeTo),
@@ -186,14 +186,14 @@ export async function relayReverse(env, cfg, wallet, db) {
         for (const log of logs) {
             let ev;
             try {
-                ev = decodeEventLog({ abi: zmBridgeAbi, data: log.data, topics: log.topics });
+                ev = decodeEventLog({ abi: stplBridgeAbi, data: log.data, topics: log.topics });
             } catch {
                 continue;
             }
             if (ev.eventName !== 'BurnRequest') continue;
-            const { seq, zmToken, chainIndex, recipient, amount } = ev.args;
+            const { seq, stplToken, chainIndex, recipient, amount } = ev.args;
             const ch = cfg.channels.find((c) =>
-                BigInt(c.chainIndex) === chainIndex && String(c.zmToken).toLowerCase() === String(zmToken).toLowerCase());
+                BigInt(c.chainIndex) === chainIndex && String(c.stplToken).toLowerCase() === String(stplToken).toLowerCase());
             if (!ch) continue; // 非本 relayer 的通道
             const key = String(seq);
             if (!(await claimOp(db, 'release', key))) continue;

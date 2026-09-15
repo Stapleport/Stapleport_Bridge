@@ -1,6 +1,6 @@
 // 交易发送：本地签名 + 裸 eth_sendRawTransaction（照 SelfSweep sweep.js 口径）。
-// 显式 legacy gasPrice：零 baseFee 链（stapleport）上 EIP-1559 会算出有效价 0 直接 revert；
-// eth_estimateGas 在 stapleport 有异常行为的历史（见 NOTES），失败回落 DEFAULT_GAS。
+// 显式 legacy gasPrice：零 baseFee 链（联盟链初代）上 EIP-1559 会算出有效价 0 直接 revert；
+// eth_estimateGas 在联盟链初代有异常行为的历史（见 NOTES），失败回落 DEFAULT_GAS。
 import { rpc, hexToBigInt, toHex } from './rpc.js';
 
 export async function sendTx(rpcUrl, wallet, tx, opts = {}) {

@@ -50,7 +50,7 @@ export default {
                 service: 'stapleport-bridge',
                 configured: Boolean(relayer) && Boolean(env.BRIDGE_DB) && cfg.channels.length > 0,
                 relayer, // authority 地址 = 通道执行权槽位应指向这里
-                channels: cfg.channels.map((c) => ({ chainIndex: c.chainIndex, srcToken: c.srcToken, zmToken: c.zmToken, covered: Boolean(c.covered) })),
+                channels: cfg.channels.map((c) => ({ chainIndex: c.chainIndex, srcToken: c.srcToken, stplToken: c.stplToken, covered: Boolean(c.covered) })),
                 hub: cfg.hub,
                 dryRun: cfg.dryRun,
             });

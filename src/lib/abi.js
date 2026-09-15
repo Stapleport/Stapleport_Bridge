@@ -17,9 +17,9 @@ export const vaultAbi = parseAbi([
 ]);
 
 // Stapleport 桥（executeMint 仅通道 authority 可调；minted 做链上幂等对账）
-export const zmBridgeAbi = parseAbi([
-    'event BurnRequest(uint256 indexed seq, bytes32 indexed channelKey, address zmToken, uint256 chainIndex, address indexed recipient, uint256 amount)',
-    'function executeMint(uint256 chainIndex, uint256 depositSeq, address zmToken, address to, uint256 amount)',
+export const stplBridgeAbi = parseAbi([
+    'event BurnRequest(uint256 indexed seq, bytes32 indexed channelKey, address stplToken, uint256 chainIndex, address indexed recipient, uint256 amount)',
+    'function executeMint(uint256 chainIndex, uint256 depositSeq, address stplToken, address to, uint256 amount)',
     'function minted(bytes32 channelKey, uint256 depositSeq) view returns (bool)',
 ]);
 
@@ -34,7 +34,7 @@ export const erc20Abi = parseAbi([
     'function balanceOf(address) view returns (uint256)',
 ]);
 
-// SwapV2 池（harvest 报价与 zmX 计价）
+// SwapV2 池（harvest 报价与 stplX 计价）
 export const pairAbi = parseAbi([
     'function getReserves() view returns (uint112, uint112, uint32)',
     'function token0() view returns (address)',

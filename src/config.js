@@ -7,15 +7,15 @@ const chainReg = (chainId) => registry.chains?.[String(chainId)] ?? null;
 export function loadConfig(env) {
     const hubChainId = String(env.HUB_CHAIN_ID || '78753');
     const hubReg = chainReg(hubChainId);
-    const zmBridge = env.ZMBRIDGE || hubReg?.ZMBridge?.address || null;
+    const stplBridge = env.STPLBRIDGE || hubReg?.StapleportBridge?.address || null;
     const stakePool = env.STAKEPOOL || hubReg?.StakePool?.address || null;
     const hubRpc = env.RPC_URL_HUB || hubReg?.meta?.rpc || null;
-    if (!hubRpc || !zmBridge) {
-        console.log('[bridge] hub 未配齐（RPC_URL_HUB / ZMBRIDGE / registry），反向与 mint 全部空转');
+    if (!hubRpc || !stplBridge) {
+        console.log('[bridge] hub 未配齐（RPC_URL_HUB / STPLBRIDGE / registry），反向与 mint 全部空转');
     }
 
     // 通道清单：本 relayer key 作为 authority 服务的通道
-    // [{ chainIndex, srcToken, zmToken, srcDecimals, vault, covered? }]
+    // [{ chainIndex, srcToken, stplToken, srcDecimals, vault, covered? }]
     // vault/rpc 按通道与 SRC_CHAINS 直配——chainIndex 是注册表索引，与 registry.json 的
     // chainId 键是两个维度，不可互查（registry 只服务 hub 端地址查找）
     const channels = JSON.parse(env.CHANNELS || '[]').map((c) => ({
@@ -37,7 +37,7 @@ export function loadConfig(env) {
     }
 
     return {
-        hub: { chainId: hubChainId, rpcUrl: hubRpc, zmBridge, stakePool },
+        hub: { chainId: hubChainId, rpcUrl: hubRpc, stplBridge, stakePool },
         channels,
         srcChains,
         relayerAddress: null, // worker.js 里由 key 派生后回填

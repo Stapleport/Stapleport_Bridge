@@ -6,24 +6,24 @@
         "rpc": "http://127.0.0.1:8545"
       },
       "BridgeVault": {
-        "address": "0x16E781D26B1AA8Ac8827eEC245F5d19721257d0e",
-        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+        "address": "0x7bC7F41C6A93609eBa824F35c0258a704758e56D",
+        "p_address": "0x528749edd316c3734680889982B278A83b07EB29"
       },
-      "ZMBridge": {
-        "address": "0x11e6b4FEB417Ff8a6AcFB45D7254A8faFcaB01fC",
-        "p_address": "0x11e6b4FEB417Ff8a6AcFB45D7254A8faFcaB01fC"
+      "StapleportBridge": {
+        "address": "0x528749edd316c3734680889982B278A83b07EB29",
+        "p_address": "0x528749edd316c3734680889982B278A83b07EB29"
       },
       "StakePool": {
-        "address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F",
-        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+        "address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53",
+        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
       },
       "ChainRegistry": {
-        "address": "0x60FB019a3C221a4d691B418Df58150569f7D6Bc4",
-        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+        "address": "0x7442c831fE2c6a31cB5bEdF4A17efD1aa02c85Fc",
+        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
       },
-      "ZMBridgedToken": {
-        "address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53",
-        "p_address": "0xa6475C64a84F10427481a40803DD2d98a2dAcF1F"
+      "StapleportBridgedToken": {
+        "address": "0xB53145Dadaf2DA892676B259aab8284033580cfF",
+        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
       },
       "WBNB": {
         "address": "0x0b42B142087FAFcac1a1C3B90a61F86da7B64835",

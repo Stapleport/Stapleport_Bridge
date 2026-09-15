@@ -18,9 +18,9 @@
   // 走 wrangler secret，绝不放这里：wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY
   "vars": {
     // ---- hub（stapleport 端）----
-    // zmBridge 地址（registry.json 为底，可用 ZMBRIDGE / RPC_URL_HUB 覆盖）
+    // stplBridge 地址（registry.json 为底，可用 STPLBRIDGE / RPC_URL_HUB 覆盖）
     "HUB_CHAIN_ID": "78753",
-    "ZMBRIDGE": "",
+    "STPLBRIDGE": "",
 
     // ---- 通道清单（JSON 数组）：本 key 作为 authority 服务的通道 ----
     // chainIndex 用链注册表颁发的索引；srcDecimals 用于精度换算（→18 无损放大 / 18→src floor）

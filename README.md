@@ -5,7 +5,7 @@
 
 ## 角色与信任模型（先读这个）
 
-- **桥方（我方）**：拥有 stapleport 端点合约（ZMBridge/StakePool/ChainRegistry/映射币工厂），
+- **桥方（我方）**：拥有 stapleport 端点合约（StapleportBridge/StakePool/ChainRegistry/映射币工厂），
   并以专用部署账号部署每条接入链的 BridgeVault（部署权=字节码保证+admin 控制权）。
   收入 = 全部通道的协议费。
 - **接入方（第三方链）**：打 gas 到桥方部署账号 → 桥方部署 Vault → 在 stapleport 质押作通道担保 →
@@ -22,11 +22,11 @@
 ## 双向流程
 
 ```
-正向：源链 Vault.deposit ──Deposit(seq)──▶ Worker ──▶ stapleport ZMBridge.executeMint（扣 0.1%）
-反向：stapleport ZMBridge.requestBurn（真烧）──BurnRequest(seq)──▶ Worker ──▶ 源链 Vault.executeRelease（扣 0.1%）
+正向：源链 Vault.deposit ──Deposit(seq)──▶ Worker ──▶ stapleport StapleportBridge.executeMint（扣 0.1%）
+反向：stapleport StapleportBridge.requestBurn（真烧）──BurnRequest(seq)──▶ Worker ──▶ 源链 Vault.executeRelease（扣 0.1%）
 ```
 
-- outId = stapleport burnSeq（全局唯一）→ Vault 层幂等；depositSeq 幂等在 ZMBridge 层；
+- outId = stapleport burnSeq（全局唯一）→ Vault 层幂等；depositSeq 幂等在 StapleportBridge 层；
   两层合约幂等 + 本 Worker D1 ops 表 = 双保险，D1 丢失最多烧几笔被合约拦下的空交易。
 - 精度换算：源币 → 18 位映射币无损放大；18 → 源币 floor，尾差留池（池只多不少）。
 - harvest：源链 Vault 攒的手续费经 swap 换 native（tip 给执行者回血 + 协议费），
@@ -38,7 +38,7 @@
    - hub（stapleport）：`BRIDGE_ROLE=hub pnpm hardhat run scripts/Bridge/deploy.js --network stapleport`
    - 源链：`BRIDGE_ROLE=source BRIDGE_CHAIN_INDEX=<索引> BRIDGE_AUTHORITY=<你的地址>
      pnpm hardhat run scripts/Bridge/deploy.js --network <接入链>`
-2. stapleport 上：`registry.registerChain(chainId, rpc)` → `zmBridge.openChannel({chainIndex,
+2. stapleport 上：`registry.registerChain(chainId, rpc)` → `stplBridge.openChannel({chainIndex,
    srcToken, authority=你的地址, gasPolicy, freeQuota=100, protocolBps/tipBps/thickBps,
    coverageBps, refPriceNative, name, symbol})`
 3. 质押：`stakePool.stakeNative{value}()` → `stakePool.bind(channelKey, shares, 0)`
@@ -62,11 +62,11 @@
 
 ```jsonc
 // vars.CHANNELS —— 本 key 作为 authority 的通道
-[{ "chainIndex": "1", "srcToken": "0x55d...", "zmToken": "0xabc...",
+[{ "chainIndex": "1", "srcToken": "0x55d...", "stplToken": "0xabc...",
    "srcDecimals": 18, "vault": "0xdef...", "covered": true }]
 // vars.SRC_CHAINS —— 源链 rpc 与确认数（野链确认数按尽调定）
 { "1": { "rpc": "https://rpc.opchain.example", "confirmations": 15 } }
-// vars.HUB_CHAIN_ID / RPC_URL_HUB / ZMBRIDGE —— stapleport 端
+// vars.HUB_CHAIN_ID / RPC_URL_HUB / STPLBRIDGE —— stapleport 端
 ```
 
 `covered: true` 的通道（第三方链）执行前做 gas 覆盖预检：relayer 余额 ≥
@@ -82,7 +82,7 @@ cd Stapleport_hardhat
 ```
 
 E2E 直接驱动本仓 src 真实代码（D1 用内存 shim），验证：锁仓 100 USDT(6位) →
-mint 99.7 zmUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账。
+mint 99.7 stplUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账。
 
 ## Worker 结构
 
