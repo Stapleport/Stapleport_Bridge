@@ -19,28 +19,41 @@
   级失陷属于物理层失效，靠最小权限 key（authority 无任何 admin 权）+ 轮换
   （setChannelAuthority 换地址旧 key 即废）+ 押金封顶兜底。
 
-## 双向流程
+## 四向流程（2026-09-16 起真双向）
 
 ```
-正向：源链 Vault.deposit ──Deposit(seq)──▶ Worker ──▶ stapleport StapleportBridge.executeMint（扣 0.1%）
-反向：stapleport StapleportBridge.requestBurn（真烧）──BurnRequest(seq)──▶ Worker ──▶ 源链 Vault.executeRelease（扣 0.1%）
+入向正向：源链 Vault.deposit(Swap) ──Deposit(seq)──▶ Worker ──▶ stapleport executeMint(Swap)（扣 0.3% 内拆三方）
+          （depositSwap 带 swapTo/minOut：hub 侧铸后即换，stplOut=wnative 拆 native 直付）
+入向反向：stapleport requestBurn（真烧）──BurnRequest(seq)──▶ Worker ──▶ 源链 Vault.executeRelease（扣 0.1%）
+出向正向：stapleport lockOut（锁 wnative）──LockOut(seq)──▶ Worker ──▶ 外链 OutVault.executeOutMint(Swap) 铸 stplN
+          （swapTo=外链目标币；=wnative 拆 native 直付「到账即有 gas」）
+出向反向：外链 requestOutBurn（烧 stplN）──BurnOut(id)──▶ Worker ──▶ stapleport executeOutRelease 解锁 wnative（扣 0.1%）
 ```
 
-- outId = stapleport burnSeq（全局唯一）→ Vault 层幂等；depositSeq 幂等在 StapleportBridge 层；
-  两层合约幂等 + 本 Worker D1 ops 表 = 双保险，D1 丢失最多烧几笔被合约拦下的空交易。
-- 精度换算：源币 → 18 位映射币无损放大；18 → 源币 floor，尾差留池（池只多不少）。
-- harvest：源链 Vault 攒的手续费经 swap 换 native（tip 给执行者回血 + 协议费），
-  「第三方链手续费折 gas 必须覆盖中继成本」由此兑现。
+- 入向幂等：mint 用 `minted(channelKey, depositSeq)`；release 用 `released(burnSeq)`（全局唯一）。
+- 出向幂等：out_mint 用外链 `outMinted(inId=outSeq)`（hub 全局序）；out_release 用 hub
+  `outReleased(chainIndex, outBurnId)`——outBurnId 是 OutVault 本链自增（非全局），
+  **op_key 必带 chainIndex 前缀**。两层合约幂等 + D1 ops 表 = 双保险。
+- 出向 18:18 无精度换算；出向通道键 = (chainIndex, address(0))，押金/额度门与入向同用
+  StakePool 但 outKey 独立命名空间互不挤占。
+- 精度换算（入向）：源币 → 18 位映射币无损放大；18 → 源币 floor，尾差留池（池只多不少）。
+- harvest：源链 Vault 与外链 OutVault 攒的手续费经 swap 换 native（tip 给执行者回血 +
+  协议费）；出向支持我方 pair 或第三方 V2 router（通道配 `router` 即走 router 路径）。
 
 ## 部署（接入方自助清单）
 
 1. 合约侧（桥方操作，见 Stapleport_hardhat/scripts/Bridge/deploy.js）：
    - hub（stapleport）：`BRIDGE_ROLE=hub pnpm hardhat run scripts/Bridge/deploy.js --network stapleport`
    - 源链：`BRIDGE_ROLE=source BRIDGE_CHAIN_INDEX=<索引> BRIDGE_AUTHORITY=<你的地址>
-     pnpm hardhat run scripts/Bridge/deploy.js --network <接入链>`
+     pnpm hardhat run scripts/Bridge/deploy.js --network <接入链>`（默认同发 stplN 克隆 +
+     OutVault 并转授 MINTER；`BRIDGE_OUT=0` 跳过出向件。OutVault 出厂：mint 费 10/10/10、
+     harvest tip 50%、gasPolicy=Free——freemium 与费率运营用 `setGasPolicy` /
+     `setMintFeeBps` / `setFeeBps` 调）
 2. stapleport 上：`registry.registerChain(chainId, rpc)` → `stplBridge.openChannel({chainIndex,
    srcToken, authority=你的地址, gasPolicy, freeQuota=100, protocolBps/tipBps/thickBps,
-   coverageBps, refPriceNative, name, symbol})`
+   coverageBps, refPriceNative, name, symbol})`；要出向（native → 本链）再开
+   `stplBridge.openOutChannel({chainIndex, authority, protocolBps/tipBps/releaseBps,
+   coverageBps})` 并把押金绑到出向键：`stakePool.bind(await stplBridge.outKeyOf(chainIndex), shares, 0)`
 3. 质押：`stakePool.stakeNative{value}()` → `stakePool.bind(channelKey, shares, 0)`
    ——押金决定发行上限与额度，轮换 authority 不带走押金。
 4. 本 Worker：
@@ -58,12 +71,14 @@
    唯一键 = (chainId, 规范化 rpc)，同 chainId 不同 rpc 是不同链索引；rpc 变更由桥方
    `setChainRpc`/`mergeChain` 合并。
 
-## CHANNELS / SRC_CHAINS 配置样例
+## CHANNELS / OUT_CHANNELS / SRC_CHAINS 配置样例
 
 ```jsonc
-// vars.CHANNELS —— 本 key 作为 authority 的通道
+// vars.CHANNELS —— 本 key 作为 authority 的入向通道
 [{ "chainIndex": "1", "srcToken": "0x55d...", "stplToken": "0xabc...",
    "srcDecimals": 18, "vault": "0xdef...", "covered": true }]
+// vars.OUT_CHANNELS —— 出向通道（native → 本链 stplN）；router 配第三方 V2 系 router 则费换 gas 走 router
+[{ "chainIndex": "1", "vault": "0xoutvault...", "token": "0xstplN...", "covered": true, "router": "" }]
 // vars.SRC_CHAINS —— 源链 rpc 与确认数（野链确认数按尽调定）
 { "1": { "rpc": "https://rpc.opchain.example", "confirmations": 15 } }
 // vars.HUB_CHAIN_ID / RPC_URL_HUB / STPLBRIDGE —— stapleport 端
@@ -78,20 +93,24 @@
 cd Stapleport_hardhat
 ./node_modules/.bin/hardhat node --port 8546   # 或复用共享 dev 节点(8545)
 ./node_modules/.bin/hardhat run scripts/Bridge/e2e.js --network localhost
-# 期望输出：=== E2E 全环 PASS：锁仓 → mint → 烧 → release → harvest ===
+# 期望输出：=== E2E 全环 PASS：锁仓 → mint → 烧 → release → harvest →
+#           入向swap → lock → outMint → outBurn → outRelease → outHarvest ===
 ```
 
-E2E 直接驱动本仓 src 真实代码（D1 用内存 shim），验证：锁仓 100 USDT(6位) →
-mint 99.7 stplUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账。
+E2E 直接驱动本仓 src 真实代码（D1 用内存 shim），七段全环：锁仓 100 USDT(6位) →
+mint 99.7 stplUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账 →
+depositSwap 20 → executeMintSwap 换 native 精确到账 → lockOut 50 → 外链铸 49.7503
+stplN → 烧 2 → hub 解锁 1.998 wnative → OutVault 烧费换 gas。末段自动生成
+`bridge/Stapleport_Web_bridge/test/dev-addresses.json`（前端 ?dev=1 注入）。
 
 ## Worker 结构
 
 ```
 src/worker.js    入口：cron tick（isolate 锁）+ GET /health
 src/config.js    配置装载（vars + registry.json + env 覆盖）与精度换算
-src/relay.js     正向/反向中继：游标 getLogs → ops 抢占 → 链上幂等对账 → 签名广播 → 重试
-src/harvest.js   手续费换 gas 回血
-src/notify.js    webhook 告警（mint_stuck / pool_insufficient / gas_coverage_low / harvest…）
+src/relay.js     四向中继：游标 getLogs → ops 抢占 → 链上幂等对账 → 签名广播 → 重试
+src/harvest.js   手续费换 gas 回血（Vault 直连池 + OutVault 双路径）
+src/notify.js    webhook 告警（mint_stuck / pool_insufficient / gas_coverage_low / out_mint_stuck / harvest…）
 src/lib/*        JSON-RPC 封装 / 最小 ABI / D1 store / 签名广播（legacy gasPrice 兜底）
 migrations/      D1：cursors（区块游标）+ ops（幂等/重试）
 ```

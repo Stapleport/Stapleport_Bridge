@@ -3,9 +3,11 @@
 // eth_estimateGas 在联盟链初代有异常行为的历史（见 NOTES），失败回落 DEFAULT_GAS。
 // 估 gas/价格口径已收编 @stapleport/worker-kit precheck.js（本仓口径为正典）：
 // gasPrecheck（估 gas → ×1.2 上限；异常回落 defaultGas 不加 headroom + eth_call 模拟甄别）
-// + effectiveGasPrice（零 baseFee 链 gasPrice=0 兜底 1 wei）。RPC 序与回落行为逐字段不变。
-import { rpc, hexToBigInt } from './rpc.js';
-import { gasPrecheck, effectiveGasPrice } from '@stapleport/worker-kit';
+// + effectiveGasPrice（零 baseFee 链 gasPrice=0 兜底 1 wei）。
+// 2026-09-17 起三连读+签名+广播骨架收编 kit broadcastLegacy（nonce/chainId/gasPrice 三读
+// 在签名前补齐；返回裸 hash 的对外形状不变，bridge 原「抛错上浮」语义保持：不开自愈）。
+import { gasPrecheck, broadcastLegacy, nativeBalance } from '@stapleport/worker-kit';
+import { rpc } from './rpc.js';
 
 export async function sendTx(rpcUrl, wallet, tx, opts = {}) {
     const { dryRun = false, defaultGas = 600000n } = opts;
@@ -13,16 +15,6 @@ export async function sendTx(rpcUrl, wallet, tx, opts = {}) {
         console.log(`[bridge] DRY_RUN ${wallet.address} → ${tx.to} data=${tx.data.slice(0, 74)}…`);
         return null;
     }
-    const [nonceHex, chainIdHex, gasPriceHex] = await Promise.all([
-        rpc(rpcUrl, 'eth_getTransactionCount', [wallet.address, 'pending']),
-        rpc(rpcUrl, 'eth_chainId', []),
-        rpc(rpcUrl, 'eth_gasPrice', []),
-    ]);
-    const nonce = hexToBigInt(nonceHex);
-    // chainId 转 number：viem 2.56 legacy 序列化内部做 BigInt(chainId * 2)，传 bigint 会混算
-    const chainId = Number(hexToBigInt(chainIdHex));
-    const gasPrice = effectiveGasPrice(hexToBigInt(gasPriceHex)); // 零价兜底 1 wei（Kit 同款）
-
     const pre = await gasPrecheck({
         rpcCall: (method, params) => rpc(rpcUrl, method, params),
         tx: { from: wallet.address, to: tx.to, data: tx.data, value: tx.value ?? '0x0' },
@@ -39,13 +31,15 @@ export async function sendTx(rpcUrl, wallet, tx, opts = {}) {
         }
     }
 
-    const signed = await wallet.signTransaction({
-        to: tx.to, data: tx.data, value: tx.value ?? 0n, nonce, chainId, gas: pre.gas, gasPrice,
+    const { txHash } = await broadcastLegacy({
+        rpcCall: (method, params) => rpc(rpcUrl, method, params),
+        wallet,
+        // nonce/chainId/gasPrice 不给 = kit 内补三连读（与本仓原 Promise.all 三读同集）；
+        // gas 用预检结果（估中 ×1.2 / 回落 defaultGas）
+        tx: { to: tx.to, data: tx.data, value: tx.value ?? 0n, gas: pre.gas },
     });
-    return rpc(rpcUrl, 'eth_sendRawTransaction', [signed]);
+    return txHash;
 }
 
-// 余额（native）查询，用于 covered 通道 gas 覆盖预检
-export async function nativeBalance(rpcUrl, address) {
-    return hexToBigInt(await rpc(rpcUrl, 'eth_getBalance', [address, 'latest']));
-}
+// 余额（native）查询，用于 covered 通道 gas 覆盖预检（kit 同款再导出）
+export { nativeBalance };

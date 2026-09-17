@@ -9,6 +9,7 @@
   "workers_dev": false,
 
   // 每分钟一轮：正向（源链 Deposit → stapleport mint）+ 反向（stapleport BurnRequest → 源链 release）
+  // + 出向正向（stapleport LockOut → 外链铸 stplN）+ 出向反向（外链 BurnOut → stapleport 解锁）
   // + harvest 回血。想更快改 "*/1" 之外可自行加密（多实例同 key 幂等安全，gas 白烧而已）
   "triggers": {
     "crons": ["* * * * *"]
@@ -27,9 +28,23 @@
     // covered=true 的通道执行前做 gas 覆盖预检（第三方链必开；stapleport 侧无所谓）
     "CHANNELS": "[]",
 
+    // ---- 出向通道清单（JSON 数组）：stapleport native → 外链表示币 stplN ----
+    // [{ chainIndex, vault(OutVault 地址), token(stplN 地址), covered?, router? }]
+    // router = 第三方 V2 系 router 地址（费换 gas 走 router 路径；不配则用我方 pair）
+    "OUT_CHANNELS": "[]",
+
     // ---- 源链清单（JSON 对象）：chainIndex → { rpc?, confirmations? } ----
     // rpc 缺省读 registry.json，registry 外的链必须给；confirmations 防重组（野链按尽调定，默认 3）
     "SRC_CHAINS": "{}",
+
+    // ---- E流 自动 onboarding（可选；API_BASE 空 = 关闭，行为与旧版完全一致）----
+    // 非空时每轮 cron 先于四向中继跑 onboardingTick：拉 <API_BASE>/v1/chains?project=bridge
+    // 的 active 链 → hub ChainRegistry 幂等注册 → spoke setChainIndex 后配 → hub
+    // openChannel(入向 native)/openOutChannel(出向) → 押金人工门（不达标停 awaiting_stake，
+    // 绝不自动质押）→ active 后链拓扑由派生层并入运行时 config（vars 里的条目永远优先）
+    "API_BASE": "",
+    // 通道押金达标线（native 个数，StakePool.boundValueOf 估值口径；e2e 口径 200）
+    "STAKE_THRESHOLD": "200",
 
     // ---- harvest 回血 ----
     // 源链 pendingFee（折 native 估值）超过阈值才 harvest，"0" = 每轮都尝试

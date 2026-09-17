@@ -42,3 +42,43 @@ export async function opAttempts(db, direction, key) {
         .bind(direction, key).first();
     return r?.attempts ?? 0;
 }
+
+// ---- onboard（E流 自动 onboarding 状态机，表见 migrations/0002_onboard.sql）----
+// status = 当前该执行的动作：registered(查/注册索引) → indexed(spoke setChainIndex)
+// → channeled(hub 开通道) → awaiting_stake(押金人工门) → active(终态，派生层取用)
+
+// 建行幂等（INSERT OR IGNORE 抢占）+ 回读当前行——cron 并发下两边都拿到同一行推进
+export async function ensureOnboardRow(db, chainId) {
+    await db.prepare(
+        `insert or ignore into onboard (chain_id, status, chain_index, detail, updated_at) values (?, 'registered', null, null, ?)`
+    ).bind(chainId, Date.now()).run();
+    return await db.prepare('select * from onboard where chain_id=?').bind(chainId).first();
+}
+
+// 状态 CAS：只有从 fromStatus 的推进生效（并发 isolate 下不会互相超越/回退）
+export async function setOnboardStatus(db, chainId, fromStatus, toStatus) {
+    const res = await db.prepare('update onboard set status=?, updated_at=? where chain_id=? and status=?')
+        .bind(toStatus, Date.now(), chainId, fromStatus).run();
+    return res.meta.changes > 0;
+}
+
+export async function setOnboardIndex(db, chainId, chainIndex) {
+    await db.prepare('update onboard set chain_index=?, updated_at=? where chain_id=?')
+        .bind(String(chainIndex), Date.now(), chainId).run();
+}
+
+export async function setOnboardDetail(db, chainId, detail) {
+    await db.prepare('update onboard set detail=?, updated_at=? where chain_id=?')
+        .bind(JSON.stringify(detail), Date.now(), chainId).run();
+}
+
+export async function listOnboardByStatus(db, status) {
+    const r = await db.prepare('select * from onboard where status=?').bind(status).all();
+    return r.results ?? [];
+}
+
+// /health 摘要用：全量行的轻量投影
+export async function listOnboard(db) {
+    const r = await db.prepare('select chain_id, status, chain_index, updated_at from onboard order by chain_id').all();
+    return r.results ?? [];
+}

@@ -6,36 +6,44 @@
         "rpc": "http://127.0.0.1:8545"
       },
       "BridgeVault": {
-        "address": "0x7bC7F41C6A93609eBa824F35c0258a704758e56D",
-        "p_address": "0x528749edd316c3734680889982B278A83b07EB29"
+        "address": "0x5d5E23d07E8C97be5340D23B597327E064a4bF90",
+        "p_address": "0x5d5E23d07E8C97be5340D23B597327E064a4bF90"
+      },
+      "OutVault": {
+        "address": "0xBb6668C83C3c11C548a674e83c1E8F0DE5CBB185",
+        "p_address": "0xBb6668C83C3c11C548a674e83c1E8F0DE5CBB185"
       },
       "StapleportBridge": {
-        "address": "0x528749edd316c3734680889982B278A83b07EB29",
-        "p_address": "0x528749edd316c3734680889982B278A83b07EB29"
+        "address": "0x4ec10A5C2722807945bEdc32C04BE2533dBABf8c",
+        "p_address": "0x4ec10A5C2722807945bEdc32C04BE2533dBABf8c"
       },
       "StakePool": {
-        "address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53",
-        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
+        "address": "0x6B2459B2B1eB334bD3Fbec2A5c68Aa322F0E9eA7",
+        "p_address": "0x6B2459B2B1eB334bD3Fbec2A5c68Aa322F0E9eA7"
       },
       "ChainRegistry": {
-        "address": "0x7442c831fE2c6a31cB5bEdF4A17efD1aa02c85Fc",
-        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
+        "address": "0x3ED554D5Ef75750b0Eb8E178f71af2e892DEb435",
+        "p_address": "0x6B2459B2B1eB334bD3Fbec2A5c68Aa322F0E9eA7"
       },
       "StapleportBridgedToken": {
-        "address": "0xB53145Dadaf2DA892676B259aab8284033580cfF",
-        "p_address": "0xA931eD7766bcf2F79DcEea0Af59DBE94Ddc01b53"
+        "address": "0xD100c738972e4d352ae54ED8cc4Ca4e41Edab3D3",
+        "p_address": "0xD100c738972e4d352ae54ED8cc4Ca4e41Edab3D3"
+      },
+      "OutToken": {
+        "address": "0xF6BE99ccD34A73273191be68aD648C3bc383EdDD",
+        "p_address": "0xF6BE99ccD34A73273191be68aD648C3bc383EdDD"
       },
       "WBNB": {
-        "address": "0x0b42B142087FAFcac1a1C3B90a61F86da7B64835",
-        "p_address": "0x0b42B142087FAFcac1a1C3B90a61F86da7B64835"
+        "address": "0x68ED9eCB7D66f5E35BC6e0325b14f75dc55B45b4",
+        "p_address": "0x68ED9eCB7D66f5E35BC6e0325b14f75dc55B45b4"
       },
       "PancakeFactory": {
-        "address": "0x8404C8eD0e39bF4c6B9c4e188a8C1aa9044DA764",
-        "p_address": "0x8404C8eD0e39bF4c6B9c4e188a8C1aa9044DA764"
+        "address": "0x4C33aD785DA848f47089dFCAbb3Ac9c857981159",
+        "p_address": "0x4C33aD785DA848f47089dFCAbb3Ac9c857981159"
       },
       "WETH9": {
-        "address": "0xB7588D82dFff0E872E3F595ea9AEDDe2d052E9b7",
-        "p_address": "0xB7588D82dFff0E872E3F595ea9AEDDe2d052E9b7"
+        "address": "0x87954e3A7EEf48bBab0b55b8ED001feAf9020f3c",
+        "p_address": "0x87954e3A7EEf48bBab0b55b8ED001feAf9020f3c"
       }
     }
   }

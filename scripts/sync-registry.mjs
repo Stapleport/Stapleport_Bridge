@@ -1,18 +1,18 @@
 // 从合约仓 deployments/all.json 同步桥相关合约地址与裁剪版 ABI 到本仓 registry.json。
-// 用法：node scripts/sync-registry.mjs [all.json 路径，缺省 ../../../Stapleport_hardhat/deployments/all.json（bridge/ 组内三跳）]
+// 用法：node scripts/sync-registry.mjs [all.json 路径，缺省 ../../Stapleport_hardhat/deployments/all.json（bridge/ 组内两跳；2026-09-15 自 web/ 挪组后少一层）]
 // 只搬运白名单合约，ABI 只保留 worker 用到的条目——包体与攻击面都最小化。
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const allPath = resolve(here, '..', process.argv[2] || '../../../Stapleport_hardhat/deployments/all.json');
+const allPath = resolve(here, '..', process.argv[2] || '../../Stapleport_hardhat/deployments/all.json');
 const outPath = join(here, '..', 'registry.json');
 
 const all = JSON.parse(readFileSync(allPath, 'utf8'));
 
-// 白名单：桥六件套 + swap 依赖（地址与 meta 进 registry；ABI 走 src/lib/abi.js 不随包）
-const WANT = ['BridgeVault', 'StapleportBridge', 'StakePool', 'ChainRegistry', 'StapleportBridgedToken', 'WBNB', 'PancakeFactory', 'WETH9'];
+// 白名单：桥六件套 + 出向件（OutVault/stplN）+ swap 依赖（地址与 meta 进 registry；ABI 走 src/lib/abi.js 不随包）
+const WANT = ['BridgeVault', 'OutVault', 'StapleportBridge', 'StakePool', 'ChainRegistry', 'StapleportBridgedToken', 'OutToken', 'WBNB', 'PancakeFactory', 'WETH9'];
 
 const chains = {};
 for (const [cid, bucket] of Object.entries(all)) {

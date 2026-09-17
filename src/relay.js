@@ -10,7 +10,7 @@
 // - 广播后不强等回执：op 保持 pending，下一轮先用链上幂等位对账（minted/released）
 //   命中即 done；未命中且 attempts 未超限则重发
 import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters, parseAbiItem, getEventSelector } from 'viem';
-import { vaultAbi, stplBridgeAbi, DEPOSIT_EVENT, BURN_EVENT } from './lib/abi.js';
+import { vaultAbi, stplBridgeAbi, outVaultAbi, DEPOSIT_EVENT, BURN_EVENT, LOCKOUT_EVENT, BURNOUT_EVENT } from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex, hexToBigInt } from './lib/rpc.js';
 import { sendTx, nativeBalance } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp } from './lib/store.js';
@@ -21,8 +21,14 @@ import { notify } from './notify.js';
 export const channelKeyOf = (chainIndex, srcToken) =>
     keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }], [BigInt(chainIndex), srcToken]));
 
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+// 出向通道键与合约同构：(chainIndex, address(0))——native 无 srcToken
+export const outKeyOf = (chainIndex) => channelKeyOf(chainIndex, ZERO_ADDRESS);
+
 const DEPOSIT_TOPIC = getEventSelector(parseAbiItem(`event ${DEPOSIT_EVENT}`));
 const BURN_TOPIC = getEventSelector(parseAbiItem(`event ${BURN_EVENT}`));
+const LOCKOUT_TOPIC = getEventSelector(parseAbiItem(`event ${LOCKOUT_EVENT}`));
+const BURNOUT_TOPIC = getEventSelector(parseAbiItem(`event ${BURNOUT_EVENT}`));
 
 // ---------------- 正向 ----------------
 
@@ -77,14 +83,19 @@ async function forwardChannel(env, cfg, wallet, db, ch, src) {
             continue;
         }
         const stplAmount = to18(ev.args.amount, ch.srcDecimals);
-        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${stplAmount} → ${ev.args.recipient}`);
+        const swapTo = ev.args.swapTo ?? ZERO_ADDRESS; // 旧事件无该字段时视为只铸不换
+        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${stplAmount} → ${ev.args.recipient}${swapTo !== ZERO_ADDRESS ? ` → swap ${swapTo} (minOut ${ev.args.minOut})` : ''}`);
         if (cfg.dryRun) {
             await finishOp(db, 'mint', key, 'dry-run');
             continue;
         }
+        const mintFn = swapTo !== ZERO_ADDRESS ? 'executeMintSwap' : 'executeMint';
+        const mintArgs = swapTo !== ZERO_ADDRESS
+            ? [BigInt(ch.chainIndex), seq, ch.stplToken, swapTo, ev.args.recipient, stplAmount, ev.args.minOut ?? 0n]
+            : [BigInt(ch.chainIndex), seq, ch.stplToken, ev.args.recipient, stplAmount];
         const data = encodeFunctionData({
-            abi: stplBridgeAbi, functionName: 'executeMint',
-            args: [BigInt(ch.chainIndex), seq, ch.stplToken, ev.args.recipient, stplAmount],
+            abi: stplBridgeAbi, functionName: mintFn,
+            args: mintArgs,
         });
         let txHash = null;
         try {
@@ -140,13 +151,21 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
             if (row.attempts >= cfg.maxAttempts) continue; // 已告警挂起，等人工
             const depRaw = await callRaw(ch.rpcUrl ?? cfg.srcChains[String(ch.chainIndex)].rpcUrl, ch.vault,
                 encodeFunctionData({ abi: vaultAbi, functionName: 'deposits', args: [seq] }));
-            const [token, , recipient, amount] = decodeFunctionResult({
+            const dep = decodeFunctionResult({
                 abi: vaultAbi, functionName: 'deposits', data: depRaw,
             });
+            const [token, , recipient, amount] = Array.isArray(dep) ? dep : [dep.token, dep.depositor, dep.recipient, dep.amount];
+            const swapTo = (Array.isArray(dep) ? dep[4] : dep.swapTo) ?? ZERO_ADDRESS;
+            const minOut = (Array.isArray(dep) ? dep[5] : dep.minOut) ?? 0n;
             if (token.toLowerCase() !== String(ch.srcToken).toLowerCase()) continue;
+            const swapToNorm = String(swapTo) === ZERO_ADDRESS ? ZERO_ADDRESS : swapTo;
+            const mintFn = swapToNorm !== ZERO_ADDRESS ? 'executeMintSwap' : 'executeMint';
+            const mintArgs = swapToNorm !== ZERO_ADDRESS
+                ? [BigInt(ch.chainIndex), seq, ch.stplToken, swapToNorm, recipient, to18(amount, ch.srcDecimals), minOut]
+                : [BigInt(ch.chainIndex), seq, ch.stplToken, recipient, to18(amount, ch.srcDecimals)];
             const data = encodeFunctionData({
-                abi: stplBridgeAbi, functionName: 'executeMint',
-                args: [BigInt(ch.chainIndex), seq, ch.stplToken, recipient, to18(amount, ch.srcDecimals)],
+                abi: stplBridgeAbi, functionName: mintFn,
+                args: mintArgs,
             });
             const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.stplBridge, data }, cfg);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, row.op_key, seq, txHash));
@@ -325,4 +344,315 @@ async function retryPendingReleases(env, cfg, wallet, db) {
 // ctx.waitUntil 的可选拆包（单测里没有 ctx）
 function ctxWait(env, promise) {
     return promise;
+}
+
+// ---------------- 出向：hub LockOut → 外链铸 stplN ----------------
+// 镜像 mint 方向：hub 侧事件驱动，参数可从 outLocks(seq) 链上现读；spoke 侧 outMinted
+// 幂等位对账。inId = hub outSeq 全局唯一，op_key 带 chainIndex 前缀防跨通道混淆。
+
+export async function relayOutForward(env, cfg, wallet, db) {
+    const hub = cfg.hub;
+    if (!hub.rpcUrl || !hub.stplBridge || cfg.outChannels.length === 0) return;
+    try {
+        await retryPendingOutMints(env, cfg, wallet, db);
+        const head = await latestBlock(hub.rpcUrl);
+        const conf = BigInt(JSON.parse(env.SRC_CHAINS || '{}')?.hub?.confirmations ?? 2);
+        const safeTo = head - conf;
+        let cursor = await getCursor(db, 'hub', 'outlock');
+        if (cursor === null) {
+            await setCursor(db, 'hub', 'outlock', safeTo);
+            console.log(`[bridge] hub 出向游标基线 → ${safeTo}`);
+            return;
+        }
+        if (safeTo <= cursor) return;
+
+        const logs = await rpc(hub.rpcUrl, 'eth_getLogs', [{
+            address: hub.stplBridge,
+            topics: [LOCKOUT_TOPIC],
+            fromBlock: toHex(cursor + 1n),
+            toBlock: toHex(safeTo),
+        }]);
+        for (const log of logs) {
+            let ev;
+            try {
+                ev = decodeEventLog({ abi: stplBridgeAbi, data: log.data, topics: log.topics });
+            } catch {
+                continue;
+            }
+            if (ev.eventName !== 'LockOut') continue;
+            const { seq, chainIndex, recipient, amount, swapTo, minOut } = ev.args;
+            const ch = cfg.outChannels.find((c) => BigInt(c.chainIndex) === chainIndex);
+            if (!ch) continue; // 非本 relayer 的出向通道
+            const key = `${chainIndex}:${seq}`;
+            if (!(await claimOp(db, 'out_mint', key))) continue;
+            if (await isOutMinted(cfg, ch, seq)) {
+                await finishOp(db, 'out_mint', key, 'already-minted');
+                continue;
+            }
+            await db.prepare('update ops set payload=? where direction=? and op_key=?')
+                .bind(JSON.stringify({
+                    seq: String(seq), chainIndex: String(chainIndex), recipient,
+                    amount: String(amount), swapTo, minOut: String(minOut),
+                }), 'out_mint', key).run();
+            await attemptOutMint(env, cfg, wallet, db, ch, { seq, recipient, amount, swapTo, minOut }, key);
+        }
+        await setCursor(db, 'hub', 'outlock', safeTo);
+    } catch (e) {
+        console.log(`[bridge] 出向正向 tick 异常：${String(e.message).slice(0, 120)}`);
+    }
+}
+
+async function attemptOutMint(env, cfg, wallet, db, ch, p, key) {
+    const srcRpc = cfg.srcChains[String(ch.chainIndex)]?.rpcUrl;
+    if (!srcRpc) {
+        await failOp(db, 'out_mint', key, 'no spoke rpc', cfg.maxAttempts);
+        return;
+    }
+    // covered 通道：relayer 在 spoke 链的 native 余额预检（executeOutMint 的 gas 在 spoke 侧出）
+    if (ch.covered) {
+        const [bal, gasPrice] = await Promise.all([
+            nativeBalance(srcRpc, wallet.address),
+            rpc(srcRpc, 'eth_gasPrice', []).then(hexToBigInt),
+        ]);
+        const need = (gasPrice * cfg.defaultGas * cfg.gasMarginX10) / 10n;
+        if (bal < need) {
+            const exhausted = await failOp(db, 'out_mint', key, 'gas coverage insufficient', cfg.maxAttempts);
+            if (exhausted) {
+                await notify(env, { event: 'out_mint_gas_coverage_low', channel: ch.chainIndex, seq: p.seq, balance: String(bal), need: String(need) });
+            }
+            return;
+        }
+    }
+    if (cfg.dryRun) {
+        await finishOp(db, 'out_mint', key, 'dry-run');
+        return;
+    }
+    const swap = p.swapTo && String(p.swapTo) !== ZERO_ADDRESS;
+    const data = swap
+        ? encodeFunctionData({
+            abi: outVaultAbi, functionName: 'executeOutMintSwap',
+            args: [p.seq, p.recipient, p.amount, p.minOut, p.swapTo],
+        })
+        : encodeFunctionData({
+            abi: outVaultAbi, functionName: 'executeOutMint',
+            args: [p.seq, p.recipient, p.amount],
+        });
+    try {
+        const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg);
+        console.log(`[bridge] executeOutMint${swap ? 'Swap' : ''} 广播: ${txHash ?? '(dry)'}`);
+        await ctxWait(env, outMintedSettle(env, cfg, db, ch, key, p.seq, txHash));
+    } catch (e) {
+        console.log(`[bridge] executeOutMint 异常 seq=${p.seq}: ${String(e.message).slice(0, 200)}`);
+        const exhausted = await failOp(db, 'out_mint', key, e, cfg.maxAttempts);
+        if (exhausted) {
+            await notify(env, { event: 'out_mint_stuck', channel: ch.chainIndex, seq: p.seq, error: String(e.message).slice(0, 200) });
+        }
+    }
+}
+
+function outMintedSettle(env, cfg, db, ch, key, seq, txHash) {
+    return (async () => {
+        for (let i = 0; i < 3; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            if (await isOutMinted(cfg, ch, seq)) {
+                await finishOp(db, 'out_mint', key, txHash ?? 'confirmed');
+                await notify(env, { event: 'out_mint_sent', channel: ch.chainIndex, seq, tx: txHash });
+                return;
+            }
+        }
+        await notify(env, { event: 'out_mint_broadcast', channel: ch.chainIndex, seq, tx: txHash, note: '回执未确认，下轮对账' });
+    })();
+}
+
+async function isOutMinted(cfg, ch, seq) {
+    const srcRpc = cfg.srcChains[String(ch.chainIndex)]?.rpcUrl;
+    const raw = await callRaw(srcRpc, ch.vault,
+        encodeFunctionData({ abi: outVaultAbi, functionName: 'outMinted', args: [seq] }));
+    return decodeFunctionResult({ abi: outVaultAbi, functionName: 'outMinted', data: raw });
+}
+
+// pending 出向铸造重试：outMinted 命中 → done；否则参数从 hub outLocks(seq) 现读后重发
+async function retryPendingOutMints(env, cfg, wallet, db) {
+    const rows = await db.prepare(
+        `select op_key, attempts from ops where direction='out_mint' and status='pending'`
+    ).all();
+    for (const row of rows.results ?? []) {
+        const [chainIndexStr, seqStr] = row.op_key.split(':');
+        const seq = BigInt(seqStr);
+        const ch = cfg.outChannels.find((c) => String(c.chainIndex) === chainIndexStr);
+        if (!ch) continue;
+        try {
+            if (await isOutMinted(cfg, ch, seq)) {
+                await finishOp(db, 'out_mint', row.op_key, 'confirmed-on-retry');
+                continue;
+            }
+            if (row.attempts >= cfg.maxAttempts) continue;
+            const lockRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
+                encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outLocks', args: [seq] }));
+            const lock = decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outLocks', data: lockRaw });
+            const recipient = Array.isArray(lock) ? lock[1] : lock.recipient;
+            const amount = Array.isArray(lock) ? lock[2] : lock.amount;
+            const swapTo = (Array.isArray(lock) ? lock[3] : lock.swapTo) ?? ZERO_ADDRESS;
+            const minOut = (Array.isArray(lock) ? lock[4] : lock.minOut) ?? 0n;
+            await attemptOutMint(env, cfg, wallet, db, ch, { seq, recipient, amount, swapTo, minOut }, row.op_key);
+        } catch (e) {
+            const exhausted = await failOp(db, 'out_mint', row.op_key, e, cfg.maxAttempts);
+            if (exhausted) {
+                await notify(env, { event: 'out_mint_stuck', channel: chainIndexStr, seq: String(seq), error: String(e.message).slice(0, 200) });
+            }
+        }
+    }
+}
+
+// ---------------- 出向反向：外链 BurnOut → hub 解锁 wnative ----------------
+// 镜像 release 方向：spoke 侧事件驱动；hub 侧 outReleased(chainIndex, outBurnId) 幂等位
+// 对账 + outStanding 在库预检。outBurnId 是 OutVault 本链自增（非全局），op_key 必须带链维度。
+
+export async function relayOutReverse(env, cfg, wallet, db) {
+    const hub = cfg.hub;
+    if (!hub.rpcUrl || !hub.stplBridge) return;
+    for (const ch of cfg.outChannels) {
+        const src = cfg.srcChains[String(ch.chainIndex)];
+        if (!src?.rpcUrl || !ch.vault) {
+            console.log(`[bridge] 出向通道 ${ch.chainIndex} 缺 rpc/vault 配置，跳过`);
+            continue;
+        }
+        try {
+            await retryPendingOutReleases(env, cfg, wallet, db, ch);
+            const head = await latestBlock(src.rpcUrl);
+            const safeTo = head - src.confirmations;
+            const curKey = `src:${ch.chainIndex}`;
+            let cursor = await getCursor(db, curKey, 'outburn');
+            if (cursor === null) {
+                await setCursor(db, curKey, 'outburn', safeTo);
+                console.log(`[bridge] 出向通道 ${ch.chainIndex} 反向游标基线 → ${safeTo}`);
+                continue;
+            }
+            if (safeTo <= cursor) continue;
+
+            const logs = await rpc(src.rpcUrl, 'eth_getLogs', [{
+                address: ch.vault,
+                topics: [BURNOUT_TOPIC],
+                fromBlock: toHex(cursor + 1n),
+                toBlock: toHex(safeTo),
+            }]);
+            for (const log of logs) {
+                let ev;
+                try {
+                    ev = decodeEventLog({ abi: outVaultAbi, data: log.data, topics: log.topics });
+                } catch {
+                    continue;
+                }
+                if (ev.eventName !== 'BurnOut') continue;
+                const { outBurnId, recipient, amount } = ev.args;
+                const key = `${ch.chainIndex}:${outBurnId}`; // outBurnId 非全局，必须带链维度防撞
+                if (!(await claimOp(db, 'out_release', key))) continue;
+                if (await isOutReleased(cfg, ch, outBurnId)) {
+                    await finishOp(db, 'out_release', key, 'already-released');
+                    continue;
+                }
+                await db.prepare('update ops set payload=? where direction=? and op_key=?')
+                    .bind(JSON.stringify({
+                        outBurnId: String(outBurnId), chainIndex: String(ch.chainIndex),
+                        recipient, amount: String(amount),
+                    }), 'out_release', key).run();
+                await attemptOutRelease(env, cfg, wallet, db, ch, { outBurnId, recipient, amount }, key);
+            }
+            await setCursor(db, curKey, 'outburn', safeTo);
+        } catch (e) {
+            console.log(`[bridge] 出向反向 chainIndex=${ch.chainIndex} tick 异常：${String(e.message).slice(0, 120)}`);
+        }
+    }
+}
+
+async function attemptOutRelease(env, cfg, wallet, db, ch, p, key) {
+    const hubRpc = cfg.hub.rpcUrl;
+    // 预检 1：hub 在库净锁定 ≥ 烧毁毛额（stplN 全额背书校验）
+    const outStandingRaw = await callRaw(hubRpc, cfg.hub.stplBridge,
+        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outStanding', args: [outKeyOf(ch.chainIndex)] }));
+    const standing = decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outStanding', data: outStandingRaw });
+    if (standing < p.amount) {
+        const exhausted = await failOp(db, 'out_release', key, 'insufficient locked', cfg.maxAttempts);
+        if (exhausted) {
+            await notify(env, { event: 'out_locked_insufficient', channel: ch.chainIndex, outBurnId: p.outBurnId, standing: String(standing), need: String(p.amount) });
+        }
+        return;
+    }
+    // 预检 2（covered 通道）：relayer 在 hub 链的 native 余额预检
+    if (ch.covered) {
+        const [bal, gasPrice] = await Promise.all([
+            nativeBalance(hubRpc, wallet.address),
+            rpc(hubRpc, 'eth_gasPrice', []).then(hexToBigInt),
+        ]);
+        const need = (gasPrice * cfg.defaultGas * cfg.gasMarginX10) / 10n;
+        if (bal < need) {
+            const exhausted = await failOp(db, 'out_release', key, 'gas coverage insufficient', cfg.maxAttempts);
+            if (exhausted) {
+                await notify(env, { event: 'out_release_gas_coverage_low', channel: ch.chainIndex, outBurnId: p.outBurnId, balance: String(bal), need: String(need) });
+            }
+            return;
+        }
+    }
+    if (cfg.dryRun) {
+        await finishOp(db, 'out_release', key, 'dry-run');
+        return;
+    }
+    const data = encodeFunctionData({
+        abi: stplBridgeAbi, functionName: 'executeOutRelease',
+        args: [BigInt(ch.chainIndex), p.outBurnId, p.recipient, p.amount],
+    });
+    try {
+        const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.stplBridge, data }, cfg);
+        console.log(`[bridge] executeOutRelease 广播: ${txHash ?? '(dry)'}`);
+        await ctxWait(env, outReleasedSettle(env, cfg, db, ch, key, p.outBurnId, txHash));
+    } catch (e) {
+        console.log(`[bridge] executeOutRelease 异常 outBurnId=${p.outBurnId}: ${String(e.message).slice(0, 200)}`);
+        const exhausted = await failOp(db, 'out_release', key, e, cfg.maxAttempts);
+        if (exhausted) {
+            await notify(env, { event: 'out_release_stuck', channel: ch.chainIndex, outBurnId: p.outBurnId, error: String(e.message).slice(0, 200) });
+        }
+    }
+}
+
+function outReleasedSettle(env, cfg, db, ch, key, outBurnId, txHash) {
+    return (async () => {
+        for (let i = 0; i < 3; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            if (await isOutReleased(cfg, ch, outBurnId)) {
+                await finishOp(db, 'out_release', key, txHash ?? 'confirmed');
+                await notify(env, { event: 'out_release_sent', channel: ch.chainIndex, outBurnId, tx: txHash });
+                return;
+            }
+        }
+        await notify(env, { event: 'out_release_broadcast', channel: ch.chainIndex, outBurnId, tx: txHash, note: '回执未确认，下轮对账' });
+    })();
+}
+
+async function isOutReleased(cfg, ch, outBurnId) {
+    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
+        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outReleased', args: [BigInt(ch.chainIndex), outBurnId] }));
+    return decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outReleased', data: raw });
+}
+
+// pending 出向赎回重试：outReleased 命中 → done；否则用 ops.payload 里的参数重发
+async function retryPendingOutReleases(env, cfg, wallet, db, ch) {
+    const rows = await db.prepare(
+        `select op_key, payload, attempts from ops where direction='out_release' and status='pending' and op_key like ?`
+    ).bind(`${ch.chainIndex}:%`).all();
+    for (const row of rows.results ?? []) {
+        try {
+            const p = JSON.parse(row.payload || '{}');
+            if (!p.outBurnId) continue;
+            if (await isOutReleased(cfg, ch, BigInt(p.outBurnId))) {
+                await finishOp(db, 'out_release', row.op_key, 'confirmed-on-retry');
+                continue;
+            }
+            if (row.attempts >= cfg.maxAttempts) continue;
+            await attemptOutRelease(env, cfg, wallet, db, ch, {
+                outBurnId: BigInt(p.outBurnId), recipient: p.recipient, amount: BigInt(p.amount),
+            }, row.op_key);
+        } catch (e) {
+            await failOp(db, 'out_release', row.op_key, e, cfg.maxAttempts);
+        }
+    }
 }
