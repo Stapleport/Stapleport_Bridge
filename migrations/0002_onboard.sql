@@ -9,7 +9,7 @@ create table if not exists onboard (
     chain_id    integer not null,                   -- EVM chainId（API 行键；与 chainIndex 是两个维度）
     status      text not null default 'registered', -- 见上方状态机注释
     chain_index text,                               -- hub ChainRegistry 颁发索引（registered 步回填；文本存防大数）
-    detail      text,                               -- JSON 档案：rpc/name/vault/outVault/outToken/stplToken/srcDecimals/covered
+    detail      text,                               -- JSON 档案：rpc/name/vault/outVault/outToken/spToken/srcDecimals/covered
     updated_at  integer not null,
     primary key (chain_id)
 );

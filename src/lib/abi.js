@@ -23,13 +23,13 @@ export const vaultAbi = parseAbi([
 // Stapleport 桥（executeMint/executeMintSwap 仅通道 authority 可调；minted/outReleased
 // 做链上幂等对账；outLocks/outStanding 做出向参数现读与在库预检）
 // E流 onboarding 增补：openChannel/openOutChannel（无许可开通道，重复开 revert
-// "channel exists"/"out channel exists"）、getChannel/getOutChannel（存在性先读 + stplToken 回填）、
+// "channel exists"/"out channel exists"）、getChannel/getOutChannel（存在性先读 + spToken 回填）、
 // registry()（派生层定位 ChainRegistry）
-export const stplBridgeAbi = parseAbi([
-    'event BurnRequest(uint256 indexed seq, bytes32 indexed channelKey, address stplToken, uint256 chainIndex, address indexed recipient, uint256 amount)',
+export const spBridgeAbi = parseAbi([
+    'event BurnRequest(uint256 indexed seq, bytes32 indexed channelKey, address spToken, uint256 chainIndex, address indexed recipient, uint256 amount)',
     'event LockOut(uint256 indexed seq, bytes32 indexed outKey, uint256 chainIndex, address indexed recipient, uint256 amount, address swapTo, uint256 minOut)',
-    'function executeMint(uint256 chainIndex, uint256 depositSeq, address stplToken, address to, uint256 amount)',
-    'function executeMintSwap(uint256 chainIndex, uint256 depositSeq, address stplIn, address stplOut, address to, uint256 amount, uint256 minOut)',
+    'function executeMint(uint256 chainIndex, uint256 depositSeq, address spToken, address to, uint256 amount)',
+    'function executeMintSwap(uint256 chainIndex, uint256 depositSeq, address spIn, address spOut, address to, uint256 amount, uint256 minOut)',
     'function executeOutRelease(uint256 chainIndex, uint256 outBurnId, address to, uint256 amount)',
     'function minted(bytes32 channelKey, uint256 depositSeq) view returns (bool)',
     'function outReleased(uint256 chainIndex, uint256 outBurnId) view returns (bool)',
@@ -37,9 +37,9 @@ export const stplBridgeAbi = parseAbi([
     'function outStanding(bytes32 outKey) view returns (uint256)',
     'function openChannel((uint256 chainIndex, address srcToken, address authority, uint8 gasPolicy, uint32 freeQuota, uint16 protocolBps, uint16 tipBps, uint16 thickBps, uint16 coverageBps, uint96 refPriceNative, string name, string symbol) p) returns (bytes32 channelKey)',
     'function openOutChannel((uint256 chainIndex, address authority, uint16 protocolBps, uint16 tipBps, uint16 releaseBps, uint16 coverageBps) p) returns (bytes32 outKey)',
-    'function getChannel(bytes32 channelKey) view returns ((uint256 chainIndex, address srcToken, address stplToken, address authority, uint8 gasPolicy, uint32 freeQuota, uint32 relays, uint16 protocolBps, uint16 tipBps, uint16 thickBps, uint16 coverageBps, uint96 refPriceNative, bool active))',
+    'function getChannel(bytes32 channelKey) view returns ((uint256 chainIndex, address srcToken, address spToken, address authority, uint8 gasPolicy, uint32 freeQuota, uint32 relays, uint16 protocolBps, uint16 tipBps, uint16 thickBps, uint16 coverageBps, uint96 refPriceNative, bool active))',
     'function getOutChannel(bytes32 outKey) view returns ((uint256 chainIndex, address authority, uint16 protocolBps, uint16 tipBps, uint16 releaseBps, uint16 coverageBps, bool active))',
-    'function registry() view returns (address)',
+    'function registry() view returns (address)', // FIXME: 合约无此函数，链上必 revert，二期计数器游标改造时移除
 ]);
 
 // hub ChainRegistry（E流 onboarding/派生层）：注册无许可、rpc 规范化=转小写+去尾/
@@ -60,7 +60,7 @@ export const outVaultAbi = parseAbi([
     'function outMinted(uint256 inId) view returns (bool)',
     'function outBurns(uint256 outBurnId) view returns (address recipient, uint256 amount)',
     'function pendingFee(address token) view returns (uint256)',
-    'function stplN() view returns (address)',
+    'function spN() view returns (address)',
     'function wnative() view returns (address)',
     'function swapFactory() view returns (address)',
     'function harvest(address token, uint256 amountOutMin)',
@@ -81,7 +81,7 @@ export const erc20Abi = parseAbi([
     'function balanceOf(address) view returns (uint256)',
 ]);
 
-// SwapV2 池（harvest 报价与 stplX 计价）
+// SwapV2 池（harvest 报价与 spX 计价）
 export const pairAbi = parseAbi([
     'function getReserves() view returns (uint112, uint112, uint32)',
     'function token0() view returns (address)',

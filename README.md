@@ -23,11 +23,11 @@
 
 ```
 入向正向：源链 Vault.deposit(Swap) ──Deposit(seq)──▶ Worker ──▶ stapleport executeMint(Swap)（扣 0.3% 内拆三方）
-          （depositSwap 带 swapTo/minOut：hub 侧铸后即换，stplOut=wnative 拆 native 直付）
+          （depositSwap 带 swapTo/minOut：hub 侧铸后即换，spOut=wnative 拆 native 直付）
 入向反向：stapleport requestBurn（真烧）──BurnRequest(seq)──▶ Worker ──▶ 源链 Vault.executeRelease（扣 0.1%）
-出向正向：stapleport lockOut（锁 wnative）──LockOut(seq)──▶ Worker ──▶ 外链 OutVault.executeOutMint(Swap) 铸 stplN
+出向正向：stapleport lockOut（锁 wnative）──LockOut(seq)──▶ Worker ──▶ 外链 OutVault.executeOutMint(Swap) 铸 spN
           （swapTo=外链目标币；=wnative 拆 native 直付「到账即有 gas」）
-出向反向：外链 requestOutBurn（烧 stplN）──BurnOut(id)──▶ Worker ──▶ stapleport executeOutRelease 解锁 wnative（扣 0.1%）
+出向反向：外链 requestOutBurn（烧 spN）──BurnOut(id)──▶ Worker ──▶ stapleport executeOutRelease 解锁 wnative（扣 0.1%）
 ```
 
 - 入向幂等：mint 用 `minted(channelKey, depositSeq)`；release 用 `released(burnSeq)`（全局唯一）。
@@ -45,15 +45,15 @@
 1. 合约侧（桥方操作，见 Stapleport_hardhat/scripts/Bridge/deploy.js）：
    - hub（stapleport）：`BRIDGE_ROLE=hub pnpm hardhat run scripts/Bridge/deploy.js --network stapleport`
    - 源链：`BRIDGE_ROLE=source BRIDGE_CHAIN_INDEX=<索引> BRIDGE_AUTHORITY=<你的地址>
-     pnpm hardhat run scripts/Bridge/deploy.js --network <接入链>`（默认同发 stplN 克隆 +
+     pnpm hardhat run scripts/Bridge/deploy.js --network <接入链>`（默认同发 spN 克隆 +
      OutVault 并转授 MINTER；`BRIDGE_OUT=0` 跳过出向件。OutVault 出厂：mint 费 10/10/10、
      harvest tip 50%、gasPolicy=Free——freemium 与费率运营用 `setGasPolicy` /
      `setMintFeeBps` / `setFeeBps` 调）
-2. stapleport 上：`registry.registerChain(chainId, rpc)` → `stplBridge.openChannel({chainIndex,
+2. stapleport 上：`registry.registerChain(chainId, rpc)` → `spBridge.openChannel({chainIndex,
    srcToken, authority=你的地址, gasPolicy, freeQuota=100, protocolBps/tipBps/thickBps,
    coverageBps, refPriceNative, name, symbol})`；要出向（native → 本链）再开
-   `stplBridge.openOutChannel({chainIndex, authority, protocolBps/tipBps/releaseBps,
-   coverageBps})` 并把押金绑到出向键：`stakePool.bind(await stplBridge.outKeyOf(chainIndex), shares, 0)`
+   `spBridge.openOutChannel({chainIndex, authority, protocolBps/tipBps/releaseBps,
+   coverageBps})` 并把押金绑到出向键：`stakePool.bind(await spBridge.outKeyOf(chainIndex), shares, 0)`
 3. 质押：`stakePool.stakeNative{value}()` → `stakePool.bind(channelKey, shares, 0)`
    ——押金决定发行上限与额度，轮换 authority 不带走押金。
 4. 本 Worker：
@@ -75,13 +75,13 @@
 
 ```jsonc
 // vars.CHANNELS —— 本 key 作为 authority 的入向通道
-[{ "chainIndex": "1", "srcToken": "0x55d...", "stplToken": "0xabc...",
+[{ "chainIndex": "1", "srcToken": "0x55d...", "spToken": "0xabc...",
    "srcDecimals": 18, "vault": "0xdef...", "covered": true }]
-// vars.OUT_CHANNELS —— 出向通道（native → 本链 stplN）；router 配第三方 V2 系 router 则费换 gas 走 router
-[{ "chainIndex": "1", "vault": "0xoutvault...", "token": "0xstplN...", "covered": true, "router": "" }]
+// vars.OUT_CHANNELS —— 出向通道（native → 本链 spN）；router 配第三方 V2 系 router 则费换 gas 走 router
+[{ "chainIndex": "1", "vault": "0xoutvault...", "token": "0xspN...", "covered": true, "router": "" }]
 // vars.SRC_CHAINS —— 源链 rpc 与确认数（野链确认数按尽调定）
 { "1": { "rpc": "https://rpc.opchain.example", "confirmations": 15 } }
-// vars.HUB_CHAIN_ID / RPC_URL_HUB / STPLBRIDGE —— stapleport 端
+// vars.HUB_CHAIN_ID / RPC_URL_HUB / SPBRIDGE —— stapleport 端
 ```
 
 `covered: true` 的通道（第三方链）执行前做 gas 覆盖预检：relayer 余额 ≥
@@ -91,17 +91,17 @@
 
 ```bash
 cd Stapleport_hardhat
-./node_modules/.bin/hardhat node --port 8546   # 或复用共享 dev 节点(8545)
+./node_modules/.bin/hardhat node --port 8546   # 桥外链 31338=8546；通常直接复用 scripts/test/1_start-chains.sh 已起的 node-31338
 ./node_modules/.bin/hardhat run scripts/Bridge/e2e.js --network localhost
 # 期望输出：=== E2E 全环 PASS：锁仓 → mint → 烧 → release → harvest →
 #           入向swap → lock → outMint → outBurn → outRelease → outHarvest ===
 ```
 
 E2E 直接驱动本仓 src 真实代码（D1 用内存 shim），七段全环：锁仓 100 USDT(6位) →
-mint 99.7 stplUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账 →
+mint 99.7 spUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账 →
 depositSwap 20 → executeMintSwap 换 native 精确到账 → lockOut 50 → 外链铸 49.7503
-stplN → 烧 2 → hub 解锁 1.998 wnative → OutVault 烧费换 gas。末段自动生成
-`bridge/Stapleport_Web_bridge/test/dev-addresses.json`（前端 ?dev=1 注入）。
+spN → 烧 2 → hub 解锁 1.998 wnative → OutVault 烧费换 gas。末段自动生成
+`Stapleport_Bridge/Stapleport_Web_bridge/test/dev-addresses.json`（前端 ?dev=1 注入）。
 
 ## Worker 结构
 

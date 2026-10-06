@@ -10,18 +10,21 @@
 // - 广播后不强等回执：op 保持 pending，下一轮先用链上幂等位对账（minted/released）
 //   命中即 done；未命中且 attempts 未超限则重发
 import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters, parseAbiItem, getEventSelector } from 'viem';
-import { vaultAbi, stplBridgeAbi, outVaultAbi, DEPOSIT_EVENT, BURN_EVENT, LOCKOUT_EVENT, BURNOUT_EVENT } from './lib/abi.js';
+import { vaultAbi, spBridgeAbi, outVaultAbi, DEPOSIT_EVENT, BURN_EVENT, LOCKOUT_EVENT, BURNOUT_EVENT } from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex, hexToBigInt } from './lib/rpc.js';
 import { sendTx, nativeBalance } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp } from './lib/store.js';
 import { to18, from18 } from './config.js';
 import { notify } from './notify.js';
+// 2026-09-23 起收编 WorkerKit 单源（原仓内常量退役）
+import { ZERO_ADDRESS } from '@stapleport/worker-kit';
+
+export { ZERO_ADDRESS };
 
 // channelKey 与合约同构：keccak256(abi.encode(chainIndex, srcToken))
 export const channelKeyOf = (chainIndex, srcToken) =>
     keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }], [BigInt(chainIndex), srcToken]));
 
-export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // 出向通道键与合约同构：(chainIndex, address(0))——native 无 srcToken
 export const outKeyOf = (chainIndex) => channelKeyOf(chainIndex, ZERO_ADDRESS);
 
@@ -75,6 +78,11 @@ async function forwardChannel(env, cfg, wallet, db, ch, src) {
             continue; // 非 Deposit 形状（理论上 topic0 已滤）
         }
         if (ev.eventName !== 'Deposit') continue;
+        // 通道-资产对齐（2026-09-18 07 联调修复）：一链多通道共用同一 BridgeVault 地址时，
+        // getLogs 按 vault 地址扫出的是**全部资产**的 Deposit——必须按本通道 srcToken 过滤，
+        // 否则先抢到 op 的通道会把别的资产存款铸成自己的 spToken（op_key=chainIndex:seq
+        // 跨通道撞号，先到先得）。BSC 双通道（USDT+wnative）正是该拓扑。
+        if (String(ev.args.token).toLowerCase() !== String(ch.srcToken).toLowerCase()) continue;
         const seq = ev.args.seq;
         const key = `${ch.chainIndex}:${seq}`;
         if (!(await claimOp(db, 'mint', key))) continue; // 他实例/前轮已抢占
@@ -82,24 +90,24 @@ async function forwardChannel(env, cfg, wallet, db, ch, src) {
             await finishOp(db, 'mint', key, 'already-minted');
             continue;
         }
-        const stplAmount = to18(ev.args.amount, ch.srcDecimals);
+        const spAmount = to18(ev.args.amount, ch.srcDecimals);
         const swapTo = ev.args.swapTo ?? ZERO_ADDRESS; // 旧事件无该字段时视为只铸不换
-        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${stplAmount} → ${ev.args.recipient}${swapTo !== ZERO_ADDRESS ? ` → swap ${swapTo} (minOut ${ev.args.minOut})` : ''}`);
+        console.log(`[bridge] Deposit seq=${seq} amount=${ev.args.amount} → mint ${spAmount} → ${ev.args.recipient}${swapTo !== ZERO_ADDRESS ? ` → swap ${swapTo} (minOut ${ev.args.minOut})` : ''}`);
         if (cfg.dryRun) {
             await finishOp(db, 'mint', key, 'dry-run');
             continue;
         }
         const mintFn = swapTo !== ZERO_ADDRESS ? 'executeMintSwap' : 'executeMint';
         const mintArgs = swapTo !== ZERO_ADDRESS
-            ? [BigInt(ch.chainIndex), seq, ch.stplToken, swapTo, ev.args.recipient, stplAmount, ev.args.minOut ?? 0n]
-            : [BigInt(ch.chainIndex), seq, ch.stplToken, ev.args.recipient, stplAmount];
+            ? [BigInt(ch.chainIndex), seq, ch.spToken, swapTo, ev.args.recipient, spAmount, ev.args.minOut ?? 0n]
+            : [BigInt(ch.chainIndex), seq, ch.spToken, ev.args.recipient, spAmount];
         const data = encodeFunctionData({
-            abi: stplBridgeAbi, functionName: mintFn,
+            abi: spBridgeAbi, functionName: mintFn,
             args: mintArgs,
         });
         let txHash = null;
         try {
-            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.stplBridge, data }, cfg);
+            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg);
             console.log(`[bridge] executeMint 广播: ${txHash ?? '(dry)'}`);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, key, seq, txHash));
         } catch (e) {
@@ -130,9 +138,9 @@ function mintedSettle(env, cfg, wallet, db, ch, key, seq, txHash) {
 
 async function isMinted(cfg, ch, seq) {
     const key = channelKeyOf(ch.chainIndex, ch.srcToken);
-    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
-        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'minted', args: [key, seq] }));
-    return decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'minted', data: raw });
+    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.spBridge,
+        encodeFunctionData({ abi: spBridgeAbi, functionName: 'minted', args: [key, seq] }));
+    return decodeFunctionResult({ abi: spBridgeAbi, functionName: 'minted', data: raw });
 }
 
 // pending 重试：链上幂等位命中 → done；未命中且未超限 → 重发（参数从 Vault.deposits(seq) 现读，
@@ -161,13 +169,13 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
             const swapToNorm = String(swapTo) === ZERO_ADDRESS ? ZERO_ADDRESS : swapTo;
             const mintFn = swapToNorm !== ZERO_ADDRESS ? 'executeMintSwap' : 'executeMint';
             const mintArgs = swapToNorm !== ZERO_ADDRESS
-                ? [BigInt(ch.chainIndex), seq, ch.stplToken, swapToNorm, recipient, to18(amount, ch.srcDecimals), minOut]
-                : [BigInt(ch.chainIndex), seq, ch.stplToken, recipient, to18(amount, ch.srcDecimals)];
+                ? [BigInt(ch.chainIndex), seq, ch.spToken, swapToNorm, recipient, to18(amount, ch.srcDecimals), minOut]
+                : [BigInt(ch.chainIndex), seq, ch.spToken, recipient, to18(amount, ch.srcDecimals)];
             const data = encodeFunctionData({
-                abi: stplBridgeAbi, functionName: mintFn,
+                abi: spBridgeAbi, functionName: mintFn,
                 args: mintArgs,
             });
-            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.stplBridge, data }, cfg);
+            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, row.op_key, seq, txHash));
         } catch (e) {
             const exhausted = await failOp(db, 'mint', row.op_key, e, cfg.maxAttempts);
@@ -182,7 +190,7 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
 
 export async function relayReverse(env, cfg, wallet, db) {
     const hub = cfg.hub;
-    if (!hub.rpcUrl || !hub.stplBridge) return;
+    if (!hub.rpcUrl || !hub.spBridge) return;
     try {
         await retryPendingReleases(env, cfg, wallet, db);
         const head = await latestBlock(hub.rpcUrl);
@@ -197,7 +205,7 @@ export async function relayReverse(env, cfg, wallet, db) {
         if (safeTo <= cursor) return;
 
         const logs = await rpc(hub.rpcUrl, 'eth_getLogs', [{
-            address: hub.stplBridge,
+            address: hub.spBridge,
             topics: [BURN_TOPIC],
             fromBlock: toHex(cursor + 1n),
             toBlock: toHex(safeTo),
@@ -205,14 +213,14 @@ export async function relayReverse(env, cfg, wallet, db) {
         for (const log of logs) {
             let ev;
             try {
-                ev = decodeEventLog({ abi: stplBridgeAbi, data: log.data, topics: log.topics });
+                ev = decodeEventLog({ abi: spBridgeAbi, data: log.data, topics: log.topics });
             } catch {
                 continue;
             }
             if (ev.eventName !== 'BurnRequest') continue;
-            const { seq, stplToken, chainIndex, recipient, amount } = ev.args;
+            const { seq, spToken, chainIndex, recipient, amount } = ev.args;
             const ch = cfg.channels.find((c) =>
-                BigInt(c.chainIndex) === chainIndex && String(c.stplToken).toLowerCase() === String(stplToken).toLowerCase());
+                BigInt(c.chainIndex) === chainIndex && String(c.spToken).toLowerCase() === String(spToken).toLowerCase());
             if (!ch) continue; // 非本 relayer 的通道
             const key = String(seq);
             if (!(await claimOp(db, 'release', key))) continue;
@@ -346,13 +354,13 @@ function ctxWait(env, promise) {
     return promise;
 }
 
-// ---------------- 出向：hub LockOut → 外链铸 stplN ----------------
+// ---------------- 出向：hub LockOut → 外链铸 spN ----------------
 // 镜像 mint 方向：hub 侧事件驱动，参数可从 outLocks(seq) 链上现读；spoke 侧 outMinted
 // 幂等位对账。inId = hub outSeq 全局唯一，op_key 带 chainIndex 前缀防跨通道混淆。
 
 export async function relayOutForward(env, cfg, wallet, db) {
     const hub = cfg.hub;
-    if (!hub.rpcUrl || !hub.stplBridge || cfg.outChannels.length === 0) return;
+    if (!hub.rpcUrl || !hub.spBridge || cfg.outChannels.length === 0) return;
     try {
         await retryPendingOutMints(env, cfg, wallet, db);
         const head = await latestBlock(hub.rpcUrl);
@@ -367,7 +375,7 @@ export async function relayOutForward(env, cfg, wallet, db) {
         if (safeTo <= cursor) return;
 
         const logs = await rpc(hub.rpcUrl, 'eth_getLogs', [{
-            address: hub.stplBridge,
+            address: hub.spBridge,
             topics: [LOCKOUT_TOPIC],
             fromBlock: toHex(cursor + 1n),
             toBlock: toHex(safeTo),
@@ -375,7 +383,7 @@ export async function relayOutForward(env, cfg, wallet, db) {
         for (const log of logs) {
             let ev;
             try {
-                ev = decodeEventLog({ abi: stplBridgeAbi, data: log.data, topics: log.topics });
+                ev = decodeEventLog({ abi: spBridgeAbi, data: log.data, topics: log.topics });
             } catch {
                 continue;
             }
@@ -487,9 +495,9 @@ async function retryPendingOutMints(env, cfg, wallet, db) {
                 continue;
             }
             if (row.attempts >= cfg.maxAttempts) continue;
-            const lockRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
-                encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outLocks', args: [seq] }));
-            const lock = decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outLocks', data: lockRaw });
+            const lockRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.spBridge,
+                encodeFunctionData({ abi: spBridgeAbi, functionName: 'outLocks', args: [seq] }));
+            const lock = decodeFunctionResult({ abi: spBridgeAbi, functionName: 'outLocks', data: lockRaw });
             const recipient = Array.isArray(lock) ? lock[1] : lock.recipient;
             const amount = Array.isArray(lock) ? lock[2] : lock.amount;
             const swapTo = (Array.isArray(lock) ? lock[3] : lock.swapTo) ?? ZERO_ADDRESS;
@@ -510,7 +518,7 @@ async function retryPendingOutMints(env, cfg, wallet, db) {
 
 export async function relayOutReverse(env, cfg, wallet, db) {
     const hub = cfg.hub;
-    if (!hub.rpcUrl || !hub.stplBridge) return;
+    if (!hub.rpcUrl || !hub.spBridge) return;
     for (const ch of cfg.outChannels) {
         const src = cfg.srcChains[String(ch.chainIndex)];
         if (!src?.rpcUrl || !ch.vault) {
@@ -567,10 +575,10 @@ export async function relayOutReverse(env, cfg, wallet, db) {
 
 async function attemptOutRelease(env, cfg, wallet, db, ch, p, key) {
     const hubRpc = cfg.hub.rpcUrl;
-    // 预检 1：hub 在库净锁定 ≥ 烧毁毛额（stplN 全额背书校验）
-    const outStandingRaw = await callRaw(hubRpc, cfg.hub.stplBridge,
-        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outStanding', args: [outKeyOf(ch.chainIndex)] }));
-    const standing = decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outStanding', data: outStandingRaw });
+    // 预检 1：hub 在库净锁定 ≥ 烧毁毛额（spN 全额背书校验）
+    const outStandingRaw = await callRaw(hubRpc, cfg.hub.spBridge,
+        encodeFunctionData({ abi: spBridgeAbi, functionName: 'outStanding', args: [outKeyOf(ch.chainIndex)] }));
+    const standing = decodeFunctionResult({ abi: spBridgeAbi, functionName: 'outStanding', data: outStandingRaw });
     if (standing < p.amount) {
         const exhausted = await failOp(db, 'out_release', key, 'insufficient locked', cfg.maxAttempts);
         if (exhausted) {
@@ -598,11 +606,11 @@ async function attemptOutRelease(env, cfg, wallet, db, ch, p, key) {
         return;
     }
     const data = encodeFunctionData({
-        abi: stplBridgeAbi, functionName: 'executeOutRelease',
+        abi: spBridgeAbi, functionName: 'executeOutRelease',
         args: [BigInt(ch.chainIndex), p.outBurnId, p.recipient, p.amount],
     });
     try {
-        const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.stplBridge, data }, cfg);
+        const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.spBridge, data }, cfg);
         console.log(`[bridge] executeOutRelease 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, outReleasedSettle(env, cfg, db, ch, key, p.outBurnId, txHash));
     } catch (e) {
@@ -629,9 +637,9 @@ function outReleasedSettle(env, cfg, db, ch, key, outBurnId, txHash) {
 }
 
 async function isOutReleased(cfg, ch, outBurnId) {
-    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
-        encodeFunctionData({ abi: stplBridgeAbi, functionName: 'outReleased', args: [BigInt(ch.chainIndex), outBurnId] }));
-    return decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'outReleased', data: raw });
+    const raw = await callRaw(cfg.hub.rpcUrl, cfg.hub.spBridge,
+        encodeFunctionData({ abi: spBridgeAbi, functionName: 'outReleased', args: [BigInt(ch.chainIndex), outBurnId] }));
+    return decodeFunctionResult({ abi: spBridgeAbi, functionName: 'outReleased', data: raw });
 }
 
 // pending 出向赎回重试：outReleased 命中 → done；否则用 ops.payload 里的参数重发

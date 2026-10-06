@@ -10,7 +10,7 @@
 // cron 并发防重入：D1 行 INSERT OR IGNORE + 状态 CAS（store.setOnboardStatus）+
 // 单 tick 内 fresh 集合防同步重复广播（跨 isolate 撞车由合约层幂等兜底）。
 import { encodeFunctionData, decodeFunctionResult } from 'viem';
-import { registryAbi, stplBridgeAbi, vaultAbi, stakePoolAbi } from './lib/abi.js';
+import { registryAbi, spBridgeAbi, vaultAbi, stakePoolAbi } from './lib/abi.js';
 import { callRaw } from './lib/rpc.js';
 import { sendTx } from './lib/tx.js';
 import {
@@ -47,7 +47,7 @@ export const normalizeRpc = (s) => String(s ?? '').trim().toLowerCase().replace(
 
 export async function onboardingTick(env, cfg, wallet, db) {
     if (!cfg.apiBase) return; // 未配 API_BASE：onboarding 关闭，vars 通道照常中继
-    if (!cfg.hub.rpcUrl || !cfg.hub.stplBridge) return;
+    if (!cfg.hub.rpcUrl || !cfg.hub.spBridge) return;
 
     let rows;
     try {
@@ -211,10 +211,10 @@ async function stepOpenChannels(env, cfg, wallet, db, apiRow, chainId, rec, fres
         return false;
     }
 
-    // 出向（hub native → spoke stplN）：outKey = (chainIndex, address(0))
+    // 出向（hub native → spoke spN）：outKey = (chainIndex, address(0))
     const outKey = outKeyOf(expected);
     const oc = arrOr(
-        await readChain(hubRpc, cfg.hub.stplBridge, stplBridgeAbi, 'getOutChannel', [outKey]),
+        await readChain(hubRpc, cfg.hub.spBridge, spBridgeAbi, 'getOutChannel', [outKey]),
         ['chainIndex', 'authority'],
     );
     const outAuthority = oc?.authority ?? null;
@@ -224,9 +224,9 @@ async function stepOpenChannels(env, cfg, wallet, db, apiRow, chainId, rec, fres
         fresh.add(key);
         try {
             await sendTx(hubRpc, wallet, {
-                to: cfg.hub.stplBridge,
+                to: cfg.hub.spBridge,
                 data: encodeFunctionData({
-                    abi: stplBridgeAbi, functionName: 'openOutChannel',
+                    abi: spBridgeAbi, functionName: 'openOutChannel',
                     args: [{ chainIndex: expected, authority: wallet.address, ...OUT_CHANNEL_DEFAULTS }],
                 }),
             }, cfg);
@@ -303,7 +303,7 @@ async function readChain(rpcUrl, to, abi, functionName, args = []) {
 async function registryAddress(cfg) {
     if (cfg._registryAddress) return cfg._registryAddress;
     try {
-        const addr = await readChain(cfg.hub.rpcUrl, cfg.hub.stplBridge, stplBridgeAbi, 'registry');
+        const addr = await readChain(cfg.hub.rpcUrl, cfg.hub.spBridge, spBridgeAbi, 'registry');
         if (!addr || addr === '0x0000000000000000000000000000000000000000') return null;
         return addr;
     } catch {
@@ -327,7 +327,7 @@ async function persistBaseDetail(db, chainId, apiRow) {
     });
 }
 
-// stplN 符号：API native_symbol 优先，回落链名清洗；限 8 位（stpl 前缀后总长 ≤ 12）
+// spN 符号：API native_symbol 优先，回落链名清洗；限 8 位（sp 前缀后总长 ≤ 12）
 function symbolOf(apiRow, chainId) {
     const raw = String(apiRow.native_symbol || apiRow.name || `C${chainId}`);
     const sym = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);

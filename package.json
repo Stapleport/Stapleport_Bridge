@@ -10,7 +10,7 @@
         "sync-registry": "node scripts/sync-registry.mjs"
     },
     "dependencies": {
-        "@stapleport/worker-kit": "file:../../worker/Stapleport_WorkerKit",
+        "@stapleport/worker-kit": "file:../../Stapleport_worker/Stapleport_WorkerKit",
         "viem": "^2.21.0"
     },
     "devDependencies": {

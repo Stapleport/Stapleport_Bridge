@@ -37,7 +37,7 @@ export async function harvestAll(env, cfg, wallet, db) {
             console.log(`[bridge] harvest chainIndex=${ch.chainIndex} 异常：${String(e.message).slice(0, 120)}`);
         }
     }
-    // 出向通道：OutVault 的烧手续费（stplN 计）→ 我方 pair 或第三方 router 换 native 回血
+    // 出向通道：OutVault 的烧手续费（spN 计）→ 我方 pair 或第三方 router 换 native 回血
     for (const ch of cfg.outChannels) {
         const srcRpc = cfg.srcChains[String(ch.chainIndex)]?.rpcUrl;
         if (!srcRpc || !ch.vault) continue;
@@ -54,7 +54,7 @@ export async function harvestAll(env, cfg, wallet, db) {
                 quote = await quoteOutNativeIn(srcRpc, ch, fee);
             }
             if (quote === null) {
-                console.log(`[bridge] outHarvest ${ch.chainIndex}: 无可用费换 gas 路径（配 router 或建 stplN/wnative 池），跳过`);
+                console.log(`[bridge] outHarvest ${ch.chainIndex}: 无可用费换 gas 路径（配 router 或建 spN/wnative 池），跳过`);
                 continue;
             }
             if (quote < cfg.harvestThreshold) continue;
@@ -114,7 +114,7 @@ async function quoteNativeIn(srcRpc, ch, fee) {
     return (fee * rNat) / rSrc;
 }
 
-// OutVault pendingFee（stplN）折 native 估值（我方 pair 现价）；无池/无 factory 返回 null
+// OutVault pendingFee（spN）折 native 估值（我方 pair 现价）；无池/无 factory 返回 null
 async function quoteOutNativeIn(srcRpc, ch, fee) {
     const factoryRaw = await callRaw(srcRpc, ch.vault,
         encodeFunctionData({ abi: outVaultAbi, functionName: 'swapFactory' }));
@@ -142,7 +142,7 @@ async function quoteOutNativeIn(srcRpc, ch, fee) {
     return (fee * rNat) / rSrc;
 }
 
-// 第三方 router 路径报价（getAmountsOut；path [stplN, wnative]）；router 不可用返回 null
+// 第三方 router 路径报价（getAmountsOut；path [spN, wnative]）；router 不可用返回 null
 async function quoteNativeViaRouter(srcRpc, ch, fee) {
     try {
         const wnRaw = await callRaw(srcRpc, ch.vault,

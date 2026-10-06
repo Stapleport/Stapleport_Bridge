@@ -11,12 +11,28 @@ const outPath = join(here, '..', 'registry.json');
 
 const all = JSON.parse(readFileSync(allPath, 'utf8'));
 
-// 白名单：桥六件套 + 出向件（OutVault/stplN）+ swap 依赖（地址与 meta 进 registry；ABI 走 src/lib/abi.js 不随包）
+// chain_index 补数（2026-09-28，与 Web 版 Stapleport_Web_bridge/js/registry.json 同口径）：
+// spoke 链在 hub ChainRegistry 的链索引不是 all.json 部署事实，留痕在 Token state 档
+// state-<chainId>.json 的 chainIndex 键（register-31338-hub.js 颁发、set-chain-index-31338.js
+// 回填后写回）。hub 链（31339/78753）本无 chain_index 语义；档案缺席/坏 JSON/无该键 →
+// 不写该字段。绝不编造数字。注：relayer 现行配置链路（src/config.js）的 chainIndex 取自
+// vars 通道档案与链上 ChainRegistry 枚举，本字段目前只作两仓 registry 事实对齐。
+const TOKEN_STATE_DIR = resolve(here, '..', '..', '..', 'Stapleport_hardhat', 'scripts', 'Token');
+const chainIndexOf = (cid) => {
+    try {
+        const v = JSON.parse(readFileSync(join(TOKEN_STATE_DIR, `state-${cid}.json`), 'utf8'))?.chainIndex;
+        return v !== undefined && v !== null && String(v).trim() !== '' ? String(v) : null;
+    } catch { return null; }
+};
+
+// 白名单：桥六件套 + 出向件（OutVault/spN）+ swap 依赖（地址与 meta 进 registry；ABI 走 src/lib/abi.js 不随包）
 const WANT = ['BridgeVault', 'OutVault', 'StapleportBridge', 'StakePool', 'ChainRegistry', 'StapleportBridgedToken', 'OutToken', 'WBNB', 'PancakeFactory', 'WETH9'];
 
 const chains = {};
 for (const [cid, bucket] of Object.entries(all)) {
     const entry = { meta: { rpc: bucket.__meta?.rpc ?? bucket.meta?.rpc ?? null } };
+    const idx = chainIndexOf(cid);
+    if (idx) entry.chain_index = idx;
     let hit = false;
     for (const name of WANT) {
         const c = bucket[name];

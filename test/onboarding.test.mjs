@@ -11,7 +11,7 @@ import { decodeFunctionData, encodeFunctionResult } from 'viem';
 import { loadConfig, deriveTopology } from '../src/config.js';
 import { onboardingTick } from '../src/onboarding.js';
 import { channelKeyOf, outKeyOf, ZERO_ADDRESS } from '../src/relay.js';
-import { registryAbi, stplBridgeAbi, stakePoolAbi, vaultAbi, outVaultAbi } from '../src/lib/abi.js';
+import { registryAbi, spBridgeAbi, stakePoolAbi, vaultAbi, outVaultAbi } from '../src/lib/abi.js';
 import {
     ensureOnboardRow, setOnboardStatus, setOnboardIndex, setOnboardDetail,
 } from '../src/lib/store.js';
@@ -28,11 +28,11 @@ const VAULT = '0x' + '44'.repeat(20);
 const OUTVAULT = '0x' + '55'.repeat(20);
 const OUTTOKEN = '0x' + '66'.repeat(20);
 const RELAYER = '0x' + '77'.repeat(20);
-const STPL = '0x' + '88'.repeat(20);
+const SP = '0x' + '88'.repeat(20);
 
 // 合并 ABI 做双向编解码（去重：vault/outVault 的 chainIndex/setChainIndex 签名相同）
 const SIM_ABI = [...new Map(
-    [...registryAbi, ...stplBridgeAbi, ...stakePoolAbi, ...vaultAbi, ...outVaultAbi]
+    [...registryAbi, ...spBridgeAbi, ...stakePoolAbi, ...vaultAbi, ...outVaultAbi]
         .map((item) => [JSON.stringify(item), item]),
 ).values()];
 
@@ -45,16 +45,16 @@ function mkState({ apiChains = [] } = {}) {
         apiBase: API_BASE,
         apiChains,
         registry: { nextIndex: 1n, chains: new Map(), byChainId: new Map() }, // idx → {evmChainId, rpc, mergedInto, active}
-        bridge: { registryAddr: REG, channels: new Map(), outChannels: new Map() }, // key → {stplToken, authority} / {authority}
+        bridge: { registryAddr: REG, channels: new Map(), outChannels: new Map() }, // key → {spToken, authority} / {authority}
         vaults: new Map([[VAULT.toLowerCase(), { chainIndex: 0n }], [OUTVAULT.toLowerCase(), { chainIndex: 0n }]]),
         stake: new Map(), // channelKey(小写) → boundValue(wei)
-        stplSeq: 0,
+        spSeq: 0,
         failOn: null, // { fn, message }：让对应函数在「广播」时 revert（且不落账/不记录）
     };
 }
 
-function nextStpl(st) {
-    return '0x' + (++st.stplSeq).toString(16).padStart(40, '0');
+function nextSp(st) {
+    return '0x' + (++st.spSeq).toString(16).padStart(40, '0');
 }
 
 function simCall(st, to, data) {
@@ -74,7 +74,7 @@ function simCall(st, to, data) {
             const ch = st.bridge.channels.get(String(args[0]).toLowerCase());
             return {
                 fn,
-                value: ch ? [0n, ZERO, ch.stplToken, ch.authority, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, true]
+                value: ch ? [0n, ZERO, ch.spToken, ch.authority, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, true]
                     : [0n, ZERO, ZERO, ZERO, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, false],
             };
         }
@@ -115,7 +115,7 @@ function applyTx(st, tx) {
         const p = args[0];
         const key = channelKeyOf(p.chainIndex, p.srcToken).toLowerCase();
         if (st.bridge.channels.has(key)) throw new Error('channel exists');
-        st.bridge.channels.set(key, { stplToken: nextStpl(st), authority: p.authority });
+        st.bridge.channels.set(key, { spToken: nextSp(st), authority: p.authority });
         return;
     }
     if (fn === 'openOutChannel') {
@@ -233,7 +233,7 @@ function mkEnv(overrides = {}) {
     return {
         HUB_CHAIN_ID: '78753',
         RPC_URL_HUB: HUB_RPC,
-        STPLBRIDGE: BRIDGE,
+        SPBRIDGE: BRIDGE,
         STAKEPOOL: POOL,
         CHANNELS: '[]',
         OUT_CHANNELS: '[]',
@@ -328,7 +328,7 @@ test('registerChain 幂等：registry 已有同 (chainId, 规范化rpc) 索引 �
     st.registry.nextIndex = 2n;
     st.vaults.get(VAULT.toLowerCase()).chainIndex = 1n; // 后配也已做过
     st.vaults.get(OUTVAULT.toLowerCase()).chainIndex = 1n;
-    st.bridge.channels.set(channelKeyOf(1n, ZERO).toLowerCase(), { stplToken: STPL, authority: RELAYER });
+    st.bridge.channels.set(channelKeyOf(1n, ZERO).toLowerCase(), { spToken: SP, authority: RELAYER });
     st.bridge.outChannels.set(outKeyOf(1n).toLowerCase(), { authority: RELAYER });
     boundBoth(st, 1n, 200n * W);
 
@@ -428,15 +428,15 @@ test('押金不足：停在 awaiting_stake 并告警，不派生进运行时 con
 
 test('vars override 优先于派生层：同 chainIndex 的 vars 条目胜出，registry 校准可摘除失踪链', async () => {
     const db = new OnboardD1();
-    const varsChannel = { chainIndex: '7', srcToken: '0x' + 'aa'.repeat(20), stplToken: '0x' + 'bb'.repeat(20), srcDecimals: 6, vault: '0x' + 'cc'.repeat(20), covered: false };
+    const varsChannel = { chainIndex: '7', srcToken: '0x' + 'aa'.repeat(20), spToken: '0x' + 'bb'.repeat(20), srcDecimals: 6, vault: '0x' + 'cc'.repeat(20), covered: false };
     const env = mkEnv({
         CHANNELS: JSON.stringify([varsChannel]),
         SRC_CHAINS: JSON.stringify({ 7: { rpc: 'https://pinned.example', confirmations: 9 } }),
     });
     // D1 档案：7（与 vars 撞链，通道应被丢弃）、8（纯派生）、9（registry 失踪，应被摘除）
-    await seedActive(db, 777, '7', { rpc: SPOKE_RPC, vault: VAULT, stplToken: STPL, srcDecimals: 18 });
-    await seedActive(db, 888, '8', { rpc: SPOKE_RPC, vault: VAULT, stplToken: STPL, outVault: OUTVAULT, outToken: OUTTOKEN, srcDecimals: 18 });
-    await seedActive(db, 999, '9', { rpc: SPOKE_RPC, vault: VAULT, stplToken: STPL, srcDecimals: 18 });
+    await seedActive(db, 777, '7', { rpc: SPOKE_RPC, vault: VAULT, spToken: SP, srcDecimals: 18 });
+    await seedActive(db, 888, '8', { rpc: SPOKE_RPC, vault: VAULT, spToken: SP, outVault: OUTVAULT, outToken: OUTTOKEN, srcDecimals: 18 });
+    await seedActive(db, 999, '9', { rpc: SPOKE_RPC, vault: VAULT, spToken: SP, srcDecimals: 18 });
 
     const st = mkState();
     st.registry.nextIndex = 9n; // 枚举 1..8：只有 7、8 在册（9 失踪 = 已合并/停用）

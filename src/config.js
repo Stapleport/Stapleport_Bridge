@@ -10,7 +10,7 @@ import registry from '../registry.json' with { type: 'json' };
 import { encodeFunctionData, decodeFunctionResult, parseEther } from 'viem';
 import { lockMsFromEnv } from '@stapleport/worker-kit';
 import { callRaw } from './lib/rpc.js';
-import { registryAbi, stplBridgeAbi } from './lib/abi.js';
+import { registryAbi, spBridgeAbi } from './lib/abi.js';
 import { listOnboardByStatus } from './lib/store.js';
 
 const chainReg = (chainId) => registry.chains?.[String(chainId)] ?? null;
@@ -18,15 +18,15 @@ const chainReg = (chainId) => registry.chains?.[String(chainId)] ?? null;
 export function loadConfig(env) {
     const hubChainId = String(env.HUB_CHAIN_ID || '78753');
     const hubReg = chainReg(hubChainId);
-    const stplBridge = env.STPLBRIDGE || hubReg?.StapleportBridge?.address || null;
+    const spBridge = env.SPBRIDGE || hubReg?.StapleportBridge?.address || null;
     const stakePool = env.STAKEPOOL || hubReg?.StakePool?.address || null;
     const hubRpc = env.RPC_URL_HUB || hubReg?.meta?.rpc || null;
-    if (!hubRpc || !stplBridge) {
-        console.log('[bridge] hub 未配齐（RPC_URL_HUB / STPLBRIDGE / registry），反向与 mint 全部空转');
+    if (!hubRpc || !spBridge) {
+        console.log('[bridge] hub 未配齐（RPC_URL_HUB / SPBRIDGE / registry），反向与 mint 全部空转');
     }
 
     // 通道清单：本 relayer key 作为 authority 服务的通道
-    // [{ chainIndex, srcToken, stplToken, srcDecimals, vault, covered? }]
+    // [{ chainIndex, srcToken, spToken, srcDecimals, vault, covered? }]
     // vault/rpc 按通道与 SRC_CHAINS 直配——chainIndex 是注册表索引，与 registry.json 的
     // chainId 键是两个维度，不可互查（registry 只服务 hub 端地址查找）
     const channels = JSON.parse(env.CHANNELS || '[]').map((c) => ({
@@ -36,8 +36,8 @@ export function loadConfig(env) {
         confirmations: BigInt(srcChainsConf(env, c.chainIndex)),
     }));
 
-    // 出向通道清单：本 relayer 在外链侧服务 OutVault（stplN 表示币宿主）的通道
-    // [{ chainIndex, vault(OutVault), token(stplN), covered?, router? }]——18:18 无精度换算
+    // 出向通道清单：本 relayer 在外链侧服务 OutVault（spN 表示币宿主）的通道
+    // [{ chainIndex, vault(OutVault), token(spN), covered?, router? }]——18:18 无精度换算
     const outChannels = JSON.parse(env.OUT_CHANNELS || '[]').map((c) => ({
         ...c,
         vault: c.vault || null,
@@ -57,7 +57,7 @@ export function loadConfig(env) {
     }
 
     return {
-        hub: { chainId: hubChainId, rpcUrl: hubRpc, stplBridge, stakePool },
+        hub: { chainId: hubChainId, rpcUrl: hubRpc, spBridge, stakePool },
         channels,
         outChannels,
         srcChains,
@@ -96,7 +96,7 @@ export { srcChainsRpc, srcChainsConf };
 // 可用时还兼校准——链被 merge/停用则派生条目摘除（vars 条目不受影响）。
 export async function deriveTopology(env, cfg, db) {
     const summary = { onboardRows: 0, channels: 0, outChannels: 0, skipped: 0 };
-    if (!db || !cfg.hub.rpcUrl || !cfg.hub.stplBridge) return summary;
+    if (!db || !cfg.hub.rpcUrl || !cfg.hub.spBridge) return summary;
     let rows;
     try {
         rows = await listOnboardByStatus(db, 'active');
@@ -119,11 +119,11 @@ export async function deriveTopology(env, cfg, db) {
             continue;
         }
         const varsHasChannel = cfg.channels.some((c) => String(c.chainIndex) === idx);
-        if (!varsHasChannel && detail.vault && detail.stplToken) {
+        if (!varsHasChannel && detail.vault && detail.spToken) {
             cfg.channels.push({
                 chainIndex: idx,
                 srcToken: detail.srcToken ?? ZERO_ADDR, // 申请制链入向 native：srcToken=address(0)
-                stplToken: detail.stplToken,
+                spToken: detail.spToken,
                 srcDecimals: detail.srcDecimals ?? 18,
                 vault: detail.vault,
                 covered: detail.covered ?? true, // 第三方链默认开 gas 覆盖预检
@@ -158,9 +158,9 @@ export async function deriveTopology(env, cfg, db) {
 // （resolve 已穿透合并，终链 mergedInto 恒 0；枚举失败返回 null，派生降级为纯 D1 档案）
 async function enumerateRegistryChains(cfg) {
     try {
-        const regRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.stplBridge,
-            encodeFunctionData({ abi: stplBridgeAbi, functionName: 'registry' }));
-        const registryAddr = decodeFunctionResult({ abi: stplBridgeAbi, functionName: 'registry', data: regRaw });
+        const regRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.spBridge,
+            encodeFunctionData({ abi: spBridgeAbi, functionName: 'registry' }));
+        const registryAddr = decodeFunctionResult({ abi: spBridgeAbi, functionName: 'registry', data: regRaw });
         if (!registryAddr || registryAddr === ZERO_ADDR) return null;
         const n = decodeFunctionResult({
             abi: registryAbi, functionName: 'nextIndex',
