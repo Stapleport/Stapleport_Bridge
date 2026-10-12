@@ -1,22 +1,22 @@
 // E流：relayer 自动 onboarding——申请制 spoke 链（API /v1/chains?project=bridge）的
-// hub 注册 → spoke chainIndex 后配 → hub 开通道 → 押金人工门 → active 的状态机执行端。
+// hub 注册 → spoke chainIndex 后配 → 检测人工已开通道 → active 的状态机执行端。
 //
 // 状态持久化在 D1 onboard 表（migrations/0002_onboard.sql），status = 当前该执行的动作：
-//   registered → indexed → channeled → awaiting_stake → active
+//   registered → indexed → channeled → active
 // 每步都以链上状态为先决条件重读（注册查 lookupByChainId、后配查 chainIndex()、
-// 开通道查 getChannel/getOutChannel、押金查 boundValueOf），广播后不等回执——
-// 下一轮重读自然对账，全链路幂等；失败保留状态，下轮 cron 重试。
-// 押金（StakePool.stakeNative+bind）是资金动作，本模块绝不签：不达标停在 awaiting_stake 告警。
+// 通道查 getOutChannel），广播后不等回执——下一轮重读自然对账，全链路幂等；失败保留状态，
+// 下轮 cron 重试。开通道去费后转 MANAGE-only：relayer 热钥不授 MANAGE，channeled 步只
+// 「检测人工已开通道（getOutChannel authority 非 0）→ 直接 active」，绝不自动开通道。
 // cron 并发防重入：D1 行 INSERT OR IGNORE + 状态 CAS（store.setOnboardStatus）+
 // 单 tick 内 fresh 集合防同步重复广播（跨 isolate 撞车由合约层幂等兜底）。
 import { encodeFunctionData, decodeFunctionResult } from 'viem';
-import { registryAbi, spBridgeAbi, vaultAbi, stakePoolAbi } from './lib/abi.js';
+import { registryAbi, spBridgeAbi, vaultAbi } from './lib/abi.js';
 import { callRaw } from './lib/rpc.js';
 import { sendTx } from './lib/tx.js';
 import {
     ensureOnboardRow, setOnboardStatus, setOnboardIndex, setOnboardDetail, listOnboard,
 } from './lib/store.js';
-import { channelKeyOf, outKeyOf } from './relay.js';
+import { outKeyOf } from './relay.js';
 import { srcChainsRpc } from './config.js';
 
 // 入向通道 srcToken=address(0)：申请制链由 BridgeBatchDeployer 出三件套
@@ -26,19 +26,6 @@ import { srcChainsRpc } from './config.js';
 // token 需求另行开启（手工/将来 API 参数化）。本模块的自动化基线 = 仅出向
 // native 通道（outKey = (chainIndex, address(0))，与出向键空间同构）。
 export const NATIVE_SRC_TOKEN = '0x0000000000000000000000000000000000000000';
-
-// 入向通道费率默认口径（留作将来按 ERC20 token 自动开入向通道用；e2e 同款：
-// Freemium + freeQuota 100 + 10/10/10 bps + coverage 5000 + refPrice 1 native）
-const CHANNEL_DEFAULTS = {
-    gasPolicy: 1,
-    freeQuota: 100n,
-    protocolBps: 10n,
-    tipBps: 10n,
-    thickBps: 10n,
-    coverageBps: 5000n,
-    refPriceNative: 10n ** 18n,
-};
-const OUT_CHANNEL_DEFAULTS = { protocolBps: 10n, tipBps: 10n, releaseBps: 10n, coverageBps: 5000n };
 
 // rpc 规范化（与 ChainRegistry._normalize 同构：转小写 + 去尾 '/'；空串由调用方拦）
 export const normalizeRpc = (s) => String(s ?? '').trim().toLowerCase().replace(/\/+$/, '');
@@ -56,7 +43,7 @@ export async function onboardingTick(env, cfg, wallet, db) {
         console.log(`[bridge] onboarding: API 拉取失败（不影响中继）：${errLine(e)}`);
         return;
     }
-    // 注册表地址整 tick 缓存（每链/每步都免一次 registry() 读）
+    // 注册表宿主 = spBridge 门面（整 tick 缓存，后续步直接用）
     cfg._registryAddress = await registryAddress(cfg);
     for (const row of rows) {
         try {
@@ -99,7 +86,6 @@ async function stepOnboard(env, cfg, wallet, db, apiRow, chainId, status, rec, f
         case 'registered': return stepRegister(env, cfg, wallet, db, apiRow, chainId, fresh);
         case 'indexed': return stepIndexVaults(env, cfg, wallet, db, apiRow, chainId, rec, fresh);
         case 'channeled': return stepOpenChannels(env, cfg, wallet, db, apiRow, chainId, rec, fresh);
-        case 'awaiting_stake': return stepAwaitStake(env, cfg, wallet, db, apiRow, chainId, rec);
         default: return false;
     }
 }
@@ -109,7 +95,7 @@ async function stepOnboard(env, cfg, wallet, db, apiRow, chainId, status, rec, f
 async function stepRegister(env, cfg, wallet, db, apiRow, chainId, fresh) {
     const regAddr = cfg._registryAddress;
     if (!regAddr) {
-        console.log('[bridge] onboarding: 拿不到 ChainRegistry 地址（registry()=0？），跳过本轮');
+        console.log('[bridge] onboarding: 拿不到 ChainRegistry 宿主地址（spBridge 未配？），跳过本轮');
         return false;
     }
     const norm = normalizeRpc(apiRow.rpc);
@@ -197,81 +183,34 @@ async function ensureIndexed(env, cfg, wallet, rpcUrl, addr, expected, label, ch
     return true; // 已广播，重读确认放到下一轮循环/tick
 }
 
-// ---------------- c. channeled：hub openOutChannel（出向 native 通道） ----------------
-// 入向通道挂 ERC20（srcToken≠0），按 token 需求另行开启——自动化基线仅出向。
+// ---------------- c. channeled：检测 MANAGE 人工已开通道（出向 native 通道） ----------------
+// 去费后 openOutChannel 转 MANAGE-only，relayer 热钥不授 MANAGE：本步只检测「人工已开通道
+// （getOutChannel authority 非 0）→ active」，绝不自动开通道。入向通道挂 ERC20，按 token 另行开启。
 
 async function stepOpenChannels(env, cfg, wallet, db, apiRow, chainId, rec, fresh) {
     const expected = BigInt(rec.chain_index ?? 0);
     if (expected === 0n) return false;
-    const detail = parseDetail(rec);
     const hubRpc = cfg.hub.rpcUrl;
-
-    if (!detail.outVault || !detail.outToken) {
-        console.warn(`[bridge] onboarding ${chainId}: API contracts 缺 OutVault/OutToken，无法开出向通道，停 channeled`);
-        return false;
-    }
 
     // 出向（hub native → spoke spN）：outKey = (chainIndex, address(0))
     const outKey = outKeyOf(expected);
     const oc = arrOr(
         await readChain(hubRpc, cfg.hub.spBridge, spBridgeAbi, 'getOutChannel', [outKey]),
-        ['chainIndex', 'authority'],
+        ['chainIndex', 'authority', 'active'],
     );
     const outAuthority = oc?.authority ?? null;
     if (!outAuthority || outAuthority === '0x0000000000000000000000000000000000000000') {
-        const key = 'openOutChannel:' + outKey;
-        if (fresh.has(key)) return false;
-        fresh.add(key);
-        try {
-            await sendTx(hubRpc, wallet, {
-                to: cfg.hub.spBridge,
-                data: encodeFunctionData({
-                    abi: spBridgeAbi, functionName: 'openOutChannel',
-                    args: [{ chainIndex: expected, authority: wallet.address, ...OUT_CHANNEL_DEFAULTS }],
-                }),
-            }, cfg);
-        } catch (e) {
-            if (!/out channel exists|channel exists/i.test(String(e.message))) throw e;
-            console.log(`[bridge] onboarding ${chainId}: openOutChannel revert=已存在，等重读确认`);
-        }
-        return false; // 等重读确认（未 mined 则停当步下轮再来）
-    }
-
-    // 出向通道就绪：档案回填 srcDecimals/covered → awaiting_stake（押金人工门）
-    detail.srcDecimals = Number(apiRow.native_decimals ?? 18);
-    detail.covered = true; // 申请制链一律按第三方链开 gas 覆盖预检
-    await setOnboardDetail(db, chainId, detail);
-    if (await setOnboardStatus(db, chainId, 'channeled', 'awaiting_stake')) {
-        console.log(`[bridge] onboarding ${chainId}: 出向通道就绪 outKey=${outKey}（→ awaiting_stake，等人工押金）`);
-    }
-    return true;
-}
-
-// ---------------- d. awaiting_stake：押金人工门（绝不自动质押） ----------------
-
-async function stepAwaitStake(env, cfg, wallet, db, apiRow, chainId, rec) {
-    if (!cfg.hub.stakePool) {
-        console.warn(`[bridge] onboarding ${chainId}: 未配 STAKEPOOL，无法核押，停 awaiting_stake`);
+        console.warn(`[bridge] onboarding ${chainId}: 出向通道未开（outKey=${outKey}），等 MANAGE 钱包人工 openOutChannel 后本步自动转 active`);
         return false;
     }
-    const expected = BigInt(rec.chain_index ?? 0);
-    const detail = parseDetail(rec);
-    const threshold = cfg.stakeThreshold;
-    const hubRpc = cfg.hub.rpcUrl;
 
-    // 只核实际开出的出向通道（入向按 token 另行开启，不在自动化基线内）
-    if (!detail.outVault || !detail.outToken) {
-        console.warn(`[bridge] onboarding ${chainId}: 无出向通道可核押，停 awaiting_stake`);
-        return false;
-    }
-    const outKey = outKeyOf(expected);
-    const boundOut = await readChain(hubRpc, cfg.hub.stakePool, stakePoolAbi, 'boundValueOf', [outKey]);
-    if (boundOut < threshold) {
-        console.warn(`[bridge] onboarding ${chainId}: 押金未达标（出向 ${boundOut} < ${threshold} wei），停在 awaiting_stake——押金须人工 StakePool.stakeNative+bind(outKey)，绝不自动质押`);
-        return false;
-    }
-    if (await setOnboardStatus(db, chainId, 'awaiting_stake', 'active')) {
-        console.log(`[bridge] onboarding ${chainId}: 押金达标，链 active（拓扑交派生层并入运行时 config）`);
+    // 出向通道就绪：档案回填 srcDecimals → active
+    await setOnboardDetail(db, chainId, {
+        ...parseDetail(rec),
+        srcDecimals: Number(apiRow.native_decimals ?? 18),
+    });
+    if (await setOnboardStatus(db, chainId, 'channeled', 'active')) {
+        console.log(`[bridge] onboarding ${chainId}: 出向通道就绪 outKey=${outKey}（→ active，拓扑交派生层并入运行时 config）`);
     }
     return true;
 }
@@ -282,7 +221,6 @@ export async function onboardSummary(db, cfg) {
     const rows = await listOnboard(db);
     return {
         apiBase: cfg.apiBase || null,
-        stakeThreshold: cfg.stakeThreshold.toString(),
         chains: rows.map((r) => ({
             chainId: r.chain_id,
             status: r.status,
@@ -300,15 +238,9 @@ async function readChain(rpcUrl, to, abi, functionName, args = []) {
     return decodeFunctionResult({ abi, functionName, data: raw });
 }
 
+// 链注册表宿主 = spBridge 门面（去费版直读门面，无 registry() 中转口）
 async function registryAddress(cfg) {
-    if (cfg._registryAddress) return cfg._registryAddress;
-    try {
-        const addr = await readChain(cfg.hub.rpcUrl, cfg.hub.spBridge, spBridgeAbi, 'registry');
-        if (!addr || addr === '0x0000000000000000000000000000000000000000') return null;
-        return addr;
-    } catch {
-        return null;
-    }
+    return cfg.hub.spBridge || null;
 }
 
 function parseDetail(rec) {

@@ -9,8 +9,8 @@
   "workers_dev": false,
 
   // 每分钟一轮：正向（源链 Deposit → stapleport mint）+ 反向（stapleport BurnRequest → 源链 release）
-  // + 出向正向（stapleport LockOut → 外链铸 spN）+ 出向反向（外链 BurnOut → stapleport 解锁）
-  // + harvest 回血。想更快改 "*/1" 之外可自行加密（多实例同 key 幂等安全，gas 白烧而已）
+  // + 出向正向（stapleport LockOut → 外链铸 spN）+ 出向反向（外链 BurnOut → stapleport 解锁）。
+  // 想更快改 "*/1" 之外可自行加密（多实例同 key 幂等安全，gas 白烧而已）
   "triggers": {
     "crons": ["* * * * *"]
   },
@@ -25,12 +25,10 @@
 
     // ---- 通道清单（JSON 数组）：本 key 作为 authority 服务的通道 ----
     // chainIndex 用链注册表颁发的索引；srcDecimals 用于精度换算（→18 无损放大 / 18→src floor）
-    // covered=true 的通道执行前做 gas 覆盖预检（第三方链必开；stapleport 侧无所谓）
     "CHANNELS": "[]",
 
     // ---- 出向通道清单（JSON 数组）：stapleport native → 外链表示币 spN ----
-    // [{ chainIndex, vault(OutVault 地址), token(spN 地址), covered?, router? }]
-    // router = 第三方 V2 系 router 地址（费换 gas 走 router 路径；不配则用我方 pair）
+    // [{ chainIndex, vault(OutVault 地址), token(spN 地址), srcToken?(hub 锁仓 ERC20；presence ⇒ ERC20 出向) }]
     "OUT_CHANNELS": "[]",
 
     // ---- 源链清单（JSON 对象）：chainIndex → { rpc?, confirmations? } ----
@@ -39,25 +37,22 @@
 
     // ---- E流 自动 onboarding（可选；API_BASE 空 = 关闭，行为与旧版完全一致）----
     // 非空时每轮 cron 先于四向中继跑 onboardingTick：拉 <API_BASE>/v1/chains?project=bridge
-    // 的 active 链 → hub ChainRegistry 幂等注册 → spoke setChainIndex 后配 → hub
-    // openChannel(入向 native)/openOutChannel(出向) → 押金人工门（不达标停 awaiting_stake，
-    // 绝不自动质押）→ active 后链拓扑由派生层并入运行时 config（vars 里的条目永远优先）
+    // 的 active 链 → hub ChainRegistry 幂等注册 → spoke setChainIndex 后配 → 检测人工已开
+    // 出向通道（getOutChannel authority 非 0）→ active 后链拓扑由派生层并入运行时 config
+    // （vars 里的条目永远优先）。开通道 MANAGE-only 转人工，relayer 热钥不授 MANAGE。
     "API_BASE": "",
-    // 通道押金达标线（native 个数，StakePool.boundValueOf 估值口径；e2e 口径 200）
-    "STAKE_THRESHOLD": "200",
 
-    // ---- harvest 回血 ----
-    // 源链 pendingFee（折 native 估值）超过阈值才 harvest，"0" = 每轮都尝试
-    "HARVEST_THRESHOLD_NATIVE": "0",
-    "HARVEST_SLIP_BPS": "100", // 换汇滑点保护 1%
+    // ---- 费率 oracle（bridge-fee 费率面 §3.3；非敏感 URL 走 vars，非 secret）----
+    // 准入/裁决重估的 gasPrice+原生币价原料源；空 = 全走 kit FALLBACK 保守值（能跑但门槛失真）。
+    // 生产=CF oracle（已部署，chainId 97/31337/31338 面）；本地彩排 runner（relay-local-e.mjs）
+    // 不读这里，自指本地 oracle dev 8799——本地链 CF 不可达（unreachable 属预期）。
+    "ORACLE_BASE": "https://stapleport-oracle.kflc.workers.dev",
 
     // ---- 行为 ----
     // tick 内存锁：防同 isolate 重叠
     "TICK_LOCK_SECONDS": "55",
-    // 单 op 重试上限：超过后告警并保持 pending（人工处理/轮换 authority 后自动恢复）
-    "MAX_ATTEMPTS": "10",
-    // covered 通道 gas 覆盖边际（预估 gas × 价格 × 此倍数 ≤ relayer 余额才执行）
-    "GAS_MARGIN_X10": "30",
+    // 单 op 重试上限：缺省 16≈15min 窗口内每 tick 一次+退款落地余量；超过后告警并保持 pending（env 覆盖仍优先）
+    "MAX_ATTEMPTS": "16",
     // true = 只打印将发的交易，不广播
     "DRY_RUN": "false",
     // 可选：事件告警 webhook（POST JSON）

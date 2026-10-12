@@ -26,10 +26,16 @@ const chainIndexOf = (cid) => {
 };
 
 // 白名单：桥六件套 + 出向件（OutVault/spN）+ swap 依赖（地址与 meta 进 registry；ABI 走 src/lib/abi.js 不随包）
-const WANT = ['BridgeVault', 'OutVault', 'StapleportBridge', 'StakePool', 'ChainRegistry', 'StapleportBridgedToken', 'OutToken', 'WBNB', 'PancakeFactory', 'WETH9'];
+// 2026-10-11 bridge-defee 去费版：质押池（StakePool）契约随合约面整删，白名单去该键。
+const WANT = ['BridgeVault', 'OutVault', 'StapleportBridge', 'ChainRegistry', 'StapleportBridgedToken', 'OutToken', 'WBNB', 'PancakeFactory', 'WETH9'];
+
+// 退役链黑名单：31340 stable 档已清退（RPC 8569 永不复用，2026-10-07 端口治理 registry
+// 死链清退）——all.json 桶留作冻结部署事实，本仓 registry.json 不再收录
+const RETIRED_CHAINS = ['31340'];
 
 const chains = {};
 for (const [cid, bucket] of Object.entries(all)) {
+    if (RETIRED_CHAINS.includes(cid)) continue;
     const entry = { meta: { rpc: bucket.__meta?.rpc ?? bucket.meta?.rpc ?? null } };
     const idx = chainIndexOf(cid);
     if (idx) entry.chain_index = idx;

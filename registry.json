@@ -5,13 +5,21 @@
       "meta": {
         "rpc": "http://127.0.0.1:8545"
       },
+      "StapleportBridge": {
+        "address": "0x26C08e69C0cd4965950b93CAA534cAaA5bDd984b",
+        "p_address": "0x26C08e69C0cd4965950b93CAA534cAaA5bDd984b"
+      },
       "WBNB": {
-        "address": "0xebCA0d7cBc5A4a6263f74A9f0e1c8444a8C3617e",
-        "p_address": "0xebCA0d7cBc5A4a6263f74A9f0e1c8444a8C3617e"
+        "address": "0xcd83563735493eB8800534685C4F4EB824c934b9",
+        "p_address": "0xcd83563735493eB8800534685C4F4EB824c934b9"
       },
       "PancakeFactory": {
-        "address": "0xa134BBFD947F00753500f8294fdaC938fa2d4B65",
-        "p_address": "0xa134BBFD947F00753500f8294fdaC938fa2d4B65"
+        "address": "0xA2A0BD704a0eaAD5Bb45a16D1F0cC6c0f554D7B1",
+        "p_address": "0xA2A0BD704a0eaAD5Bb45a16D1F0cC6c0f554D7B1"
+      },
+      "WETH9": {
+        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
+        "p_address": "0x8768D727fef5F7aC933b5316B235357C50A4af37"
       }
     },
     "31338": {
@@ -20,16 +28,16 @@
       },
       "chain_index": "1",
       "BridgeVault": {
-        "address": "0xe4339325E21Cd9f0e0757D84a1e3509ccc390DFC",
-        "p_address": "0xe4339325E21Cd9f0e0757D84a1e3509ccc390DFC"
+        "address": "0x526bb56217097Cc8E34268202f736eedcbBD4071",
+        "p_address": "0x526bb56217097Cc8E34268202f736eedcbBD4071"
       },
       "OutVault": {
-        "address": "0x82ac786eF60cDe4680b71Ff7b33726DD10e23206",
-        "p_address": "0x82ac786eF60cDe4680b71Ff7b33726DD10e23206"
+        "address": "0x0B4Ce84dFbC2048B142A7Ca87e7099D695a940fC",
+        "p_address": "0x0B4Ce84dFbC2048B142A7Ca87e7099D695a940fC"
       },
       "StapleportBridgedToken": {
-        "address": "0xb41f45E550e1E5da2886fc6838eCFdaC288D5015",
-        "p_address": "0xb41f45E550e1E5da2886fc6838eCFdaC288D5015"
+        "address": "0x5D433BeAea98d30e98950599b79C5bCFfDd278ab",
+        "p_address": "0x5D433BeAea98d30e98950599b79C5bCFfDd278ab"
       },
       "WETH9": {
         "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
@@ -41,25 +49,12 @@
         "rpc": "http://127.0.0.1:8547"
       },
       "StapleportBridge": {
-        "address": "0x40C09A3FF1471D4a63737124d7C76a8a6075fa01",
-        "p_address": "0x40C09A3FF1471D4a63737124d7C76a8a6075fa01"
-      },
-      "StakePool": {
-        "address": "0x40C09A3FF1471D4a63737124d7C76a8a6075fa01",
-        "p_address": "0x40C09A3FF1471D4a63737124d7C76a8a6075fa01"
+        "address": "0xb51364722DCd6F2EE781432cD9b004A070A5Fc59",
+        "p_address": "0xb51364722DCd6F2EE781432cD9b004A070A5Fc59"
       },
       "WETH9": {
         "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
-      }
-    },
-    "31340": {
-      "meta": {
-        "rpc": "http://127.0.0.1:8569"
-      },
-      "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
+        "p_address": "0xD74E1a5c9B00C61617b26e31E205cFf2434A8b7F"
       }
     },
     "78753": {
@@ -70,10 +65,6 @@
         "address": "0xA8417F2C433C62D19238AebCE3dFD48E5eECBaf3",
         "p_address": "0xA8417F2C433C62D19238AebCE3dFD48E5eECBaf3"
       },
-      "StakePool": {
-        "address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1",
-        "p_address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1"
-      },
       "ChainRegistry": {
         "address": "0xAe248842a02D87EA0Dda9C153033879d6EE2406b",
         "p_address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1"
@@ -81,6 +72,15 @@
       "StapleportBridgedToken": {
         "address": "0x66F226C12d15782d393f2998D9C34F0b45C32C04",
         "p_address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1"
+      },
+      "WETH9": {
+        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
+        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
+      }
+    },
+    "78756": {
+      "meta": {
+        "rpc": "https://rpc-test.stapleport.com"
       },
       "WETH9": {
         "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",

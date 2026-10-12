@@ -98,7 +98,7 @@ cd Stapleport_hardhat
 ```
 
 E2E 直接驱动本仓 src 真实代码（D1 用内存 shim），七段全环：锁仓 100 USDT(6位) →
-mint 99.7 spUSDT(18位) → burn 40 → release 39.96 → harvest 换 native 分账 →
+mint 99.7 spUSD(18位) → burn 40 → release 39.96 → harvest 换 native 分账 →
 depositSwap 20 → executeMintSwap 换 native 精确到账 → lockOut 50 → 外链铸 49.7503
 spN → 烧 2 → hub 解锁 1.998 wnative → OutVault 烧费换 gas。末段自动生成
 `Stapleport_Bridge/Stapleport_Web_bridge/test/dev-addresses.json`（前端 ?dev=1 注入）。

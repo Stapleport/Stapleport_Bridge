@@ -1,5 +1,5 @@
 // tx.js stub 对拍（本仓无 node --test 套件，本文件为收编后的门禁）：fetch 全 stub 不碰网络。
-// 覆盖：dryRun 不广播 / 正常路径返回裸 hash（对外形状不变）/ gasPrecheck 回落路径 /
+// 覆盖：dryRun 不广播 / 正常路径返回裸 hash（对外形状不变）/ gasPrecheck 回落跳过广播返回 null /
 // 零价兜底。旧版行为基线：三连读(nonce/chainId/gasPrice) + sign + sendRaw，
 // kit 收编后签名统一 type:'legacy'、id 统一 1，RPC 序不变（预检先于三连读）。
 import { test } from 'node:test';
@@ -83,7 +83,7 @@ test('正常路径：预检 ×1.2 → 三连读 → 签名 → 广播，返回�
     }
 });
 
-test('gasPrecheck 回落：估 gas 抛错 → eth_call 模拟通过 → defaultGas 不吃 headroom，仍广播', async () => {
+test('gasPrecheck 回落：估 gas 抛错 → 跳过广播，返回 null，不签名不广播', async () => {
     const w = stubWallet();
     const { fetchImpl, calls } = stubFetch();
     const orig = globalThis.fetch;
@@ -93,10 +93,11 @@ test('gasPrecheck 回落：估 gas 抛错 → eth_call 模拟通过 → defaultG
         return fetchImpl(url, init);
     };
     try {
-        const hash = await sendTx('https://rpc.example', w, { to: TO, data: '0xdeadbeef' }, { defaultGas: 600000n });
-        assert.equal(hash, '0xhash0');
-        assert.equal(w.signed[0].gas, 600000n); // 回落不加 ×1.2
-        assert.ok(calls.some((c) => c.method === 'eth_call')); // 模拟甄别跑过
+        const out = await sendTx('https://rpc.example', w, { to: TO, data: '0xdeadbeef' }, { defaultGas: 600000n });
+        assert.equal(out, null); // 估算失败绝不照发烧 gas
+        assert.ok(calls.some((c) => c.method === 'eth_call')); // 模拟甄别仍跑（仅诊断日志）
+        assert.equal(calls.some((c) => c.method === 'eth_sendRawTransaction'), false); // 未广播
+        assert.equal(w.signed.length, 0); // 未签名
     } finally {
         globalThis.fetch = orig;
     }

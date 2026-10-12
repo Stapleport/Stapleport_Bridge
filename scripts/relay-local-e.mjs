@@ -70,9 +70,14 @@ const st31338 = JSON.parse(readFileSync(join(HARHAT, 'scripts/Token/state-31338.
 const stCh = JSON.parse(readFileSync(join(HARHAT, 'scripts/Token', CHANNEL_FILE), 'utf8'));
 const allHub = JSON.parse(readFileSync(join(HARHAT, 'deployments/all.json'), 'utf8'))[HUB_BUCKET];
 
+// evmChainId：relayer cfg 消费 oracle（GET /gas?chainId=）需链 id 映射；来源=state-31338.json chainId
+// （deploy 清单补值，bridge-fee L2 裁决项；缺此值则 feeDomain.evmChainId=undefined → oracle chainId=null
+//  → 落 kit FALLBACK_PRICE）。
+const SPOKE_EVM_CHAIN_ID = Number(st31338.chainId);
 const channels = [
     {
         chainIndex: stCh.chainIndex,
+        evmChainId: SPOKE_EVM_CHAIN_ID,
         srcToken: stCh.channels.usdt.srcToken,
         spToken: stCh.channels.usdt.spToken,
         srcDecimals: 18,
@@ -83,6 +88,7 @@ const channels = [
 if (stCh.channels.wnative) {
     channels.push({
         chainIndex: stCh.chainIndex,
+        evmChainId: SPOKE_EVM_CHAIN_ID,
         srcToken: stCh.channels.wnative.srcToken,
         spToken: stCh.channels.wnative.spToken,
         srcDecimals: 18,
@@ -98,7 +104,7 @@ if (OUT) {
     if (!o?.chainIndex || !o?.spoke?.outVault || !o?.spoke?.spN) {
         throw new Error('--out 已启用但通道档案缺 out.chainIndex/out.spoke.outVault/out.spoke.spN——先跑 scripts/Token/open-out-channel-78753.js 留痕');
     }
-    outChannels = [{ chainIndex: o.chainIndex, vault: o.spoke.outVault, token: o.spoke.spN, covered: false }];
+    outChannels = [{ chainIndex: o.chainIndex, evmChainId: Number(o.spoke.chainId) || SPOKE_EVM_CHAIN_ID, vault: o.spoke.outVault, token: o.spoke.spN, covered: false }];
 }
 
 let relayerMnemonic;

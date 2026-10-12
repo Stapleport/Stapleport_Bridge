@@ -11,6 +11,9 @@ importers:
       '@stapleport/worker-kit':
         specifier: file:../../Stapleport_worker/Stapleport_WorkerKit
         version: file:../../Stapleport_worker/Stapleport_WorkerKit
+      stapleport-web-kit:
+        specifier: link:../../Stapleport_Web_kit
+        version: link:../../Stapleport_Web_kit
       viem:
         specifier: ^2.21.0
         version: 2.57.2

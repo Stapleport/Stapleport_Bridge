@@ -1,0 +1,16 @@
+# TEST relayer 密钥档模板（78756 mini-hub ↔ Sepolia spoke）
+#
+# 本模板只是形状说明，勿直接提交真实值。真实档落仓外 privateinfo 域，本地软链进仓：
+#   ln -sfn ../../secrets/bridge-test.dev.vars .dev.vars
+# 实弹 test worker 用 CF secret 注入，不落文件：
+#   wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY -c wrangler.test.jsonc
+#
+# 与 wrangler.test.jsonc 的 vars 配套；wr.jsonc 的 vars 放公开配置，本档只放密钥。
+
+# 通道 authority 私钥 = 热句 idx107（secrets/mnemonics.js loadMnemonic("hot"),
+# m/44'/60'/0'/0/107）。地址 0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459。
+# 不复用生产 relayer idx0；测试网专用，泄漏半径=测试币。
+BRIDGE_RELAYER_PRIVATE_KEY=0xREPLACE_WITH_HOT_IDX107_PRIVATE_KEY
+
+# 可选：事件告警 webhook（同 wr.jsonc WEBHOOK_URL，留空即关）
+# WEBHOOK_URL=

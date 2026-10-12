@@ -7,10 +7,12 @@
     "scripts": {
         "dev": "wrangler dev --local",
         "deploy": "wrangler deploy",
-        "sync-registry": "node scripts/sync-registry.mjs"
+        "sync-registry": "node scripts/sync-registry.mjs",
+        "test": "node --test \"test/*.test.mjs\""
     },
     "dependencies": {
         "@stapleport/worker-kit": "file:../../Stapleport_worker/Stapleport_WorkerKit",
+        "stapleport-web-kit": "link:../../Stapleport_Web_kit",
         "viem": "^2.21.0"
     },
     "devDependencies": {

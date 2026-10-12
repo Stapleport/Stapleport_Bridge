@@ -43,6 +43,28 @@ export async function opAttempts(db, direction, key) {
     return r?.attempts ?? 0;
 }
 
+// ---- 费率准入面（bridge-fee-design §3.1：ops.fee_state / fee_attempts）----
+// fee_state: null(未评估) | 'admit'(达标已广播) | 'insufficient'(不足未广播) | 'never_sweep'(垃圾终态)。
+// 与 status/attempts 独立：status 仍是 pending|done（重试路径零回归），attempts 仍记广播失败重试。
+// 搭车式 update 复用 ops 行（caller 保证行已由 claimOp 建好）。
+export async function setFeeState(db, direction, key, feeState) {
+    await db.prepare('update ops set fee_state=?, updated_at=? where direction=? and op_key=?')
+        .bind(feeState, Date.now(), direction, key).run();
+}
+
+// 窗口内准入尝试计次（≤5，D4）；与 attempts 独立。返回累计值。
+export async function bumpFeeAttempts(db, direction, key) {
+    await db.prepare('update ops set fee_attempts=fee_attempts+1, updated_at=? where direction=? and op_key=?')
+        .bind(Date.now(), direction, key).run();
+    const r = await db.prepare('select fee_attempts from ops where direction=? and op_key=?')
+        .bind(direction, key).first();
+    return r?.fee_attempts ?? 0;
+}
+
+// 卡死计数（追派二：退款腿/领奖腿预估连续失败；借 fee_attempts 列，独立于 ops.attempts/MAX_ATTEMPTS）。
+// 返回累计值——达阈值即写 fee_state='refund_stuck'/'claim_stuck' 终态停试。
+export const bumpStuckCount = bumpFeeAttempts;
+
 // ---- onboard（E流 自动 onboarding 状态机，表见 migrations/0002_onboard.sql）----
 // status = 当前该执行的动作：registered(查/注册索引) → indexed(spoke setChainIndex)
 // → channeled(hub 开通道) → awaiting_stake(押金人工门) → active(终态，派生层取用)

@@ -1,17 +1,18 @@
 // onboarding.js + config.js 派生层 stub 对拍（node --test，fetch/wallet/D1 全 stub 不碰网络，
 // 风格对齐 tx.test.mjs）。链语义用 viem encode/decode 搭最小模拟器：
-//   - eth_call 按 selector 路由到内存态（ChainRegistry/StapleportBridge/StakePool/Vault）
+//   - eth_call 按 selector 路由到内存态（ChainRegistry/StapleportBridge/Vault）
 //   - wallet.signTransaction 即时落账（模拟「广播即出块」，同 tick 重读立即可见）
 //   - D1 只装 onboard 表的精确 SQL 形状
-// 覆盖：状态机推进顺序 / registerChain 幂等复用 / setChainIndex 已非 0 跳过 /
-// openChannel "channel exists" 容错 / 押金不足停 awaiting_stake / vars override 优先于派生。
+// 覆盖：状态机推进顺序（registered→indexed→channeled→active，去费版无押金步）/
+// registerChain 幂等复用 / setChainIndex 已非 0 跳过 / channeled 只检测人工已开通道（零开通道广播）/
+// registry() 断点修复（链注册表直读 spBridge 门面）/ vars override 优先于派生。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeFunctionData, encodeFunctionResult } from 'viem';
 import { loadConfig, deriveTopology } from '../src/config.js';
 import { onboardingTick } from '../src/onboarding.js';
 import { channelKeyOf, outKeyOf, ZERO_ADDRESS } from '../src/relay.js';
-import { registryAbi, spBridgeAbi, stakePoolAbi, vaultAbi, outVaultAbi } from '../src/lib/abi.js';
+import { registryAbi, spBridgeAbi, vaultAbi, outVaultAbi } from '../src/lib/abi.js';
 import {
     ensureOnboardRow, setOnboardStatus, setOnboardIndex, setOnboardDetail,
 } from '../src/lib/store.js';
@@ -22,8 +23,6 @@ const HUB_RPC = 'https://hub.example';
 const SPOKE_RPC = 'https://spoke.example';
 const API_BASE = 'https://api.example';
 const BRIDGE = '0x' + '11'.repeat(20);
-const REG = '0x' + '22'.repeat(20);
-const POOL = '0x' + '33'.repeat(20);
 const VAULT = '0x' + '44'.repeat(20);
 const OUTVAULT = '0x' + '55'.repeat(20);
 const OUTTOKEN = '0x' + '66'.repeat(20);
@@ -32,7 +31,7 @@ const SP = '0x' + '88'.repeat(20);
 
 // 合并 ABI 做双向编解码（去重：vault/outVault 的 chainIndex/setChainIndex 签名相同）
 const SIM_ABI = [...new Map(
-    [...registryAbi, ...spBridgeAbi, ...stakePoolAbi, ...vaultAbi, ...outVaultAbi]
+    [...registryAbi, ...spBridgeAbi, ...vaultAbi, ...outVaultAbi]
         .map((item) => [JSON.stringify(item), item]),
 ).values()];
 
@@ -45,16 +44,10 @@ function mkState({ apiChains = [] } = {}) {
         apiBase: API_BASE,
         apiChains,
         registry: { nextIndex: 1n, chains: new Map(), byChainId: new Map() }, // idx → {evmChainId, rpc, mergedInto, active}
-        bridge: { registryAddr: REG, channels: new Map(), outChannels: new Map() }, // key → {spToken, authority} / {authority}
+        bridge: { channels: new Map(), outChannels: new Map() }, // key → {spToken, authority} / {authority}
         vaults: new Map([[VAULT.toLowerCase(), { chainIndex: 0n }], [OUTVAULT.toLowerCase(), { chainIndex: 0n }]]),
-        stake: new Map(), // channelKey(小写) → boundValue(wei)
-        spSeq: 0,
         failOn: null, // { fn, message }：让对应函数在「广播」时 revert（且不落账/不记录）
     };
-}
-
-function nextSp(st) {
-    return '0x' + (++st.spSeq).toString(16).padStart(40, '0');
 }
 
 function simCall(st, to, data) {
@@ -69,20 +62,17 @@ function simCall(st, to, data) {
                 ?? { evmChainId: 0n, rpc: '', mergedInto: 0n, active: false };
             return { fn, value: [args[0], [c.evmChainId, c.rpc, c.mergedInto, c.active]] };
         }
-        case 'registry': return { fn, value: st.bridge.registryAddr };
         case 'getChannel': {
             const ch = st.bridge.channels.get(String(args[0]).toLowerCase());
             return {
                 fn,
-                value: ch ? [0n, ZERO, ch.spToken, ch.authority, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, true]
-                    : [0n, ZERO, ZERO, ZERO, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, false],
+                value: ch ? [0n, ZERO, ch.spToken, ch.authority, true] : [0n, ZERO, ZERO, ZERO, false],
             };
         }
         case 'getOutChannel': {
             const oc = st.bridge.outChannels.get(String(args[0]).toLowerCase());
-            return { fn, value: oc ? [0n, oc.authority, 0n, 0n, 0n, 0n, true] : [0n, ZERO, 0n, 0n, 0n, 0n, false] };
+            return { fn, value: oc ? [0n, oc.authority, true] : [0n, ZERO, false] };
         }
-        case 'boundValueOf': return { fn, value: st.stake.get(String(args[0]).toLowerCase()) ?? 0n };
         case 'chainIndex': return { fn, value: st.vaults.get(T)?.chainIndex ?? 0n };
         default: throw new Error(`sim: unhandled call ${fn}`);
     }
@@ -115,7 +105,7 @@ function applyTx(st, tx) {
         const p = args[0];
         const key = channelKeyOf(p.chainIndex, p.srcToken).toLowerCase();
         if (st.bridge.channels.has(key)) throw new Error('channel exists');
-        st.bridge.channels.set(key, { spToken: nextSp(st), authority: p.authority });
+        st.bridge.channels.set(key, { spToken: OUTTOKEN, authority: p.authority });
         return;
     }
     if (fn === 'openOutChannel') {
@@ -167,59 +157,7 @@ function mkWallet(st) {
     };
 }
 
-// onboard 表最小 D1（只装 store.js 里 onboard 相关 SQL 的精确形状，键/参序逐分支对齐）
-class OnboardD1 {
-    constructor() { this.rows = new Map(); }
-    prepare(sql) { return new Stmt(this, sql); }
-}
-class Stmt {
-    constructor(db, sql) { this.db = db; this.sql = sql.replace(/\s+/g, ' ').trim(); this.args = []; }
-    bind(...a) { this.args = a; return this; }
-    async run() {
-        const [sql, a] = [this.sql, this.args];
-        const meta = (ok) => ({ meta: { changes: ok ? 1 : 0 } });
-        if (sql.startsWith('insert or ignore into onboard')) {
-            const key = String(a[0]);
-            const inserted = !this.db.rows.has(key);
-            if (inserted) {
-                this.db.rows.set(key, { chain_id: a[0], status: 'registered', chain_index: null, detail: null, updated_at: a[1] });
-            }
-            return meta(inserted);
-        }
-        if (sql.startsWith('update onboard set status')) {
-            const row = this.db.rows.get(String(a[2]));
-            const ok = Boolean(row) && row.status === a[3];
-            if (ok) { row.status = a[0]; row.updated_at = a[1]; }
-            return meta(ok);
-        }
-        if (sql.startsWith('update onboard set chain_index')) {
-            const row = this.db.rows.get(String(a[2]));
-            if (row) { row.chain_index = String(a[0]); row.updated_at = a[1]; }
-            return meta(Boolean(row));
-        }
-        if (sql.startsWith('update onboard set detail')) {
-            const row = this.db.rows.get(String(a[2]));
-            if (row) { row.detail = a[0]; row.updated_at = a[1]; }
-            return meta(Boolean(row));
-        }
-        throw new Error(`d1 shim: unhandled ${sql}`);
-    }
-    async first() {
-        if (this.sql.startsWith('select * from onboard where chain_id=?')) {
-            return this.db.rows.get(String(this.args[0])) ?? null;
-        }
-        return null;
-    }
-    async all() {
-        if (this.sql.startsWith('select * from onboard where status=?')) {
-            return { results: [...this.db.rows.values()].filter((r) => r.status === this.args[0]) };
-        }
-        if (this.sql.startsWith('select chain_id, status, chain_index, updated_at from onboard')) {
-            return { results: [...this.db.rows.values()].map((r) => ({ ...r })) };
-        }
-        return { results: [] };
-    }
-}
+import { OnboardD1 } from './helpers/mem-d1.mjs';
 
 // ---------------- 环境小件 ----------------
 
@@ -234,7 +172,6 @@ function mkEnv(overrides = {}) {
         HUB_CHAIN_ID: '78753',
         RPC_URL_HUB: HUB_RPC,
         SPBRIDGE: BRIDGE,
-        STAKEPOOL: POOL,
         CHANNELS: '[]',
         OUT_CHANNELS: '[]',
         SRC_CHAINS: '{}',
@@ -260,62 +197,51 @@ async function captureWarn(fn) {
     try { return [await fn(), warns]; } finally { console.warn = orig; }
 }
 
-// 直接把某链插成 active 档案（派生层测试用）
+// 直接把某链插成 active 档案（派生层测试用）：去费版状态链 registered→indexed→channeled→active
 async function seedActive(db, chainId, chainIndex, detail) {
     await ensureOnboardRow(db, chainId);
     await setOnboardIndex(db, chainId, chainIndex);
     await setOnboardDetail(db, chainId, detail);
-    for (const [from, to] of [['registered', 'indexed'], ['indexed', 'channeled'], ['channeled', 'awaiting_stake'], ['awaiting_stake', 'active']]) {
+    for (const [from, to] of [['registered', 'indexed'], ['indexed', 'channeled'], ['channeled', 'active']]) {
         await setOnboardStatus(db, chainId, from, to);
     }
 }
 
-const boundBoth = (st, idx, wei) => {
-    st.stake.set(channelKeyOf(idx, ZERO).toLowerCase(), wei);
-    st.stake.set(outKeyOf(idx).toLowerCase(), wei);
-};
-
 // ---------------- 用例 ----------------
 
-test('状态机推进：registered→indexed→channeled→awaiting_stake→active，active 后派生进运行时 config', async () => {
+test('状态机推进：registered→indexed→channeled→active；channeled 只检测人工已开通道，绝不自动开通道', async () => {
     const st = mkState({ apiChains: [ROW] });
     const db = new OnboardD1();
     const env = mkEnv();
     const wallet = mkWallet(st);
     await withFetch(st, async () => {
         const cfg = loadConfig(env);
-        // 首轮：注册→后配→开出向全部广播（模拟器即时落账，通道重读确认留到下轮）
+        // 首轮：注册→后配广播；channeled 因通道未开停住（绝不自动 openOutChannel）
         await onboardingTick(env, cfg, wallet, db);
         let row = [...db.rows.values()][0];
         assert.equal(row.status, 'channeled');
         assert.equal(row.chain_index, '1'); // registry 从 1 起颁索引
-        assert.deepEqual(fnSequence(wallet), ['registerChain', 'setChainIndex', 'setChainIndex', 'openOutChannel']);
+        assert.deepEqual(fnSequence(wallet), ['registerChain', 'setChainIndex', 'setChainIndex']);
 
-        // 次轮：出向通道重读确认 → awaiting_stake；押金未配 → warn 停住
-        await captureWarn(() => onboardingTick(env, cfg, wallet, db));
-        row = [...db.rows.values()][0];
-        assert.equal(row.status, 'awaiting_stake');
-        assert.equal(fnSequence(wallet).length, 4); // 本轮零新增广播
-
-        // 押金不足：继续停住（warn），绝不自动质押（广播序列不变）
-        boundBoth(st, 1n, 100n * W);
+        // 次轮：通道仍未开 → warn 停住，本轮零新增广播
         const [, warns] = await captureWarn(() => onboardingTick(env, cfg, wallet, db));
-        assert.equal([...db.rows.values()][0].status, 'awaiting_stake');
-        assert.ok(warns.some((m) => m.includes('押金未达标') && m.includes('awaiting_stake') && m.includes('绝不自动质押')));
-        assert.equal(fnSequence(wallet).length, 4);
+        assert.equal([...db.rows.values()][0].status, 'channeled');
+        assert.ok(warns.some((m) => m.includes('出向通道未开') && m.includes('MANAGE')));
+        assert.equal(fnSequence(wallet).length, 3);
 
-        // 押金达标 → active；派生层把链拓扑并入运行时 config
-        boundBoth(st, 1n, 200n * W);
+        // 人工 MANAGE 开出通道（模拟链上已存在）→ 检测命中转 active
+        st.bridge.outChannels.set(outKeyOf(1n).toLowerCase(), { authority: RELAYER });
         await onboardingTick(env, cfg, wallet, db);
         assert.equal([...db.rows.values()][0].status, 'active');
+        assert.equal(fnSequence(wallet).length, 3); // 检测步零新广播
 
+        // 派生层把链拓扑并入运行时 config
         await deriveTopology(env, cfg, db);
         assert.equal(cfg.channels.length, 0); // 入向通道不自动开（挂 ERC20、按 token 另行开启）
         assert.equal(cfg.outChannels.length, 1);
         assert.equal(cfg.outChannels[0].chainIndex, '1');
         assert.equal(cfg.outChannels[0].vault, OUTVAULT);
         assert.equal(cfg.outChannels[0].token, OUTTOKEN);
-        assert.equal(cfg.outChannels[0].covered, true);
         assert.equal(cfg.srcChains['1'].rpcUrl, SPOKE_RPC); // registry rpc 口径
         assert.equal(cfg.srcChains['1'].confirmations, 3n);
     });
@@ -328,9 +254,7 @@ test('registerChain 幂等：registry 已有同 (chainId, 规范化rpc) 索引 �
     st.registry.nextIndex = 2n;
     st.vaults.get(VAULT.toLowerCase()).chainIndex = 1n; // 后配也已做过
     st.vaults.get(OUTVAULT.toLowerCase()).chainIndex = 1n;
-    st.bridge.channels.set(channelKeyOf(1n, ZERO).toLowerCase(), { spToken: SP, authority: RELAYER });
-    st.bridge.outChannels.set(outKeyOf(1n).toLowerCase(), { authority: RELAYER });
-    boundBoth(st, 1n, 200n * W);
+    st.bridge.outChannels.set(outKeyOf(1n).toLowerCase(), { authority: RELAYER }); // 通道已由 MANAGE 人工开出
 
     const db = new OnboardD1();
     const env = mkEnv();
@@ -346,7 +270,7 @@ test('registerChain 幂等：registry 已有同 (chainId, 规范化rpc) 索引 �
 });
 
 test('setChainIndex 已非 0：等于期望则跳过；期值不符则停住告警且不再碰该金库', async () => {
-    // 已非 0 且等于期望：不重发，只注册+开通道
+    // 已非 0 且等于期望：不重发，只注册；通道未开停 channeled
     const st = mkState({ apiChains: [ROW] });
     st.vaults.get(VAULT.toLowerCase()).chainIndex = 1n;
     st.vaults.get(OUTVAULT.toLowerCase()).chainIndex = 1n;
@@ -357,8 +281,8 @@ test('setChainIndex 已非 0：等于期望则跳过；期值不符则停住告�
         const cfg = loadConfig(env);
         await onboardingTick(env, cfg, wallet, db);
         await onboardingTick(env, cfg, wallet, db);
-        assert.deepEqual(fnSequence(wallet), ['registerChain', 'openOutChannel']);
-        assert.equal([...db.rows.values()][0].status, 'awaiting_stake');
+        assert.deepEqual(fnSequence(wallet), ['registerChain']);
+        assert.equal([...db.rows.values()][0].status, 'channeled');
     });
 
     // 已非 0 但与期望不符（串链）：主金库停住告警；出向金库仍为 0 可正常后配
@@ -378,57 +302,51 @@ test('setChainIndex 已非 0：等于期望则跳过；期值不符则停住告�
     });
 });
 
-test('openOutChannel revert "out channel exists" 容错：不炸 tick、状态保留；通道在链可读后继续推进', async () => {
+test('channeled 检测：getOutChannel authority 非 0 → active；档案回填 srcDecimals（零开通道广播）', async () => {
     const st = mkState({ apiChains: [ROW] });
-    st.failOn = { fn: 'openOutChannel', message: 'out channel exists' };
-    boundBoth(st, 1n, 200n * W);
     const db = new OnboardD1();
     const env = mkEnv();
     const wallet = mkWallet(st);
     await withFetch(st, async () => {
         const cfg = loadConfig(env);
-        await onboardingTick(env, cfg, wallet, db); // 不应抛出
-        assert.equal([...db.rows.values()][0].status, 'channeled'); // 保留状态等下轮
-        assert.deepEqual(fnSequence(wallet), ['registerChain', 'setChainIndex', 'setChainIndex']); // 开通道广播失败未落账
+        await onboardingTick(env, cfg, wallet, db); // 注册+后配 → channeled（通道未开）
+        assert.equal([...db.rows.values()][0].status, 'channeled');
 
-        // 通道实际已存在（他方开出/回执后重读命中）→ 视为已存在继续推进
-        st.failOn = null;
+        // 通道实际已存在（他方/人工 MANAGE 开出）→ 检测命中继续推进 → active
         st.bridge.outChannels.set(outKeyOf(1n).toLowerCase(), { authority: RELAYER });
-        await onboardingTick(env, cfg, wallet, db); // 出向重读命中 → awaiting_stake
-        await onboardingTick(env, cfg, wallet, db); // 押金达标 → active
+        await onboardingTick(env, cfg, wallet, db);
         assert.equal([...db.rows.values()][0].status, 'active');
         const detail = JSON.parse([...db.rows.values()][0].detail);
-        assert.equal(detail.covered, true); // 档案回填
-        assert.deepEqual(fnSequence(wallet), ['registerChain', 'setChainIndex', 'setChainIndex']); // 重读命中零新广播
+        assert.equal(detail.srcDecimals, 18); // 档案回填
+        assert.deepEqual(fnSequence(wallet), ['registerChain', 'setChainIndex', 'setChainIndex']); // 检测步零新广播
     });
 });
 
-test('押金不足：停在 awaiting_stake 并告警，不派生进运行时 config；补足后放行', async () => {
-    const st = mkState({ apiChains: [ROW] });
-    boundBoth(st, 1n, 100n * W); // < 200
+test('registry() 断点修复：链注册表读直走 spBridge 门面，enumerateRegistryChains 不再走不存在的 registry()', async () => {
     const db = new OnboardD1();
+    await seedActive(db, 888, '8', { rpc: SPOKE_RPC, vault: VAULT, spToken: SP, outVault: OUTVAULT, outToken: OUTTOKEN, srcDecimals: 18 });
+    const st = mkState();
+    st.registry.nextIndex = 9n; // 枚举 1..8：只有 8 在册
+    st.registry.chains.set('8', { evmChainId: 888n, rpc: SPOKE_RPC, mergedInto: 0n, active: true });
     const env = mkEnv();
-    const wallet = mkWallet(st);
     await withFetch(st, async () => {
         const cfg = loadConfig(env);
-        await onboardingTick(env, cfg, wallet, db);
-        await onboardingTick(env, cfg, wallet, db);
-        assert.equal([...db.rows.values()][0].status, 'awaiting_stake');
-        assert.deepEqual(fnSequence(wallet).at(-1), 'openOutChannel'); // 资金动作零广播（最后一步仍是开通道）
-
-        await deriveTopology(env, cfg, db);
-        assert.equal(cfg.channels.length, 0); // 未 active 不派生
-        assert.equal(cfg.outChannels.length, 0);
-
-        boundBoth(st, 1n, 300n * W);
-        await onboardingTick(env, cfg, wallet, db);
-        assert.equal([...db.rows.values()][0].status, 'active');
+        const logs = [];
+        const orig = console.log;
+        console.log = (m) => logs.push(String(m));
+        let summary;
+        try { summary = await deriveTopology(env, cfg, db); } finally { console.log = orig; }
+        assert.equal(summary.skipped, 0);
+        assert.equal(summary.outChannels, 1);
+        assert.equal(cfg.outChannels[0].chainIndex, '8');
+        assert.equal(cfg.srcChains['8'].rpcUrl, SPOKE_RPC); // registry rpc 口径（直读门面）
+        assert.ok(!logs.some((m) => m.includes('ChainRegistry 枚举失败'))); // 修复后不降级
     });
 });
 
 test('vars override 优先于派生层：同 chainIndex 的 vars 条目胜出，registry 校准可摘除失踪链', async () => {
     const db = new OnboardD1();
-    const varsChannel = { chainIndex: '7', srcToken: '0x' + 'aa'.repeat(20), spToken: '0x' + 'bb'.repeat(20), srcDecimals: 6, vault: '0x' + 'cc'.repeat(20), covered: false };
+    const varsChannel = { chainIndex: '7', srcToken: '0x' + 'aa'.repeat(20), spToken: '0x' + 'bb'.repeat(20), srcDecimals: 6, vault: '0x' + 'cc'.repeat(20) };
     const env = mkEnv({
         CHANNELS: JSON.stringify([varsChannel]),
         SRC_CHAINS: JSON.stringify({ 7: { rpc: 'https://pinned.example', confirmations: 9 } }),

@@ -5,7 +5,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { createTickLock } from '@stapleport/worker-kit';
 import { loadConfig, deriveTopology } from './config.js';
 import { relayForward, relayReverse, relayOutForward, relayOutReverse } from './relay.js';
-import { harvestAll } from './harvest.js';
+import { relayRefunds } from './refund.js';
+import { relayInstructions } from './instructions.js';
 import { onboardingTick, onboardSummary } from './onboarding.js';
 
 // isolate 内存 tick 锁（照 SelfSweep 口径：防同 isolate 重叠，跨 isolate 靠 ops 表抢占）。
@@ -31,7 +32,7 @@ export default {
 
         console.log(`[bridge] tick 开始 relayer=${wallet.address} 通道数=${cfg.channels.length} 出向通道数=${cfg.outChannels.length} dryRun=${cfg.dryRun}`);
 
-        // E流 onboarding 先行：申请制链自动注册/后配/开通道 → 押金人工门。
+        // E流 onboarding 先行：申请制链自动注册/后配 → 检测人工已开通道转 active（开通道 MANAGE-only）。
         // 整段 try/catch 包住：onboarding 挂了只丢本轮推进，绝不能影响既有四向中继。
         try {
             await onboardingTick(env, cfg, wallet, db);
@@ -53,7 +54,11 @@ export default {
         await relayReverse(env, cfg, wallet, db);
         await relayOutForward(env, cfg, wallet, db);
         await relayOutReverse(env, cfg, wallet, db);
-        await harvestAll(env, cfg, wallet, db);
+        // 退款腿：过期落地指令事件 → 退款动作（时间有效性闭环；跑在四向中继之后）
+        await relayRefunds(env, cfg, wallet, db);
+        // 通用指令信封腿（v2 §2.1）：既有五腿之后（§2.3 tick 序=既有五腿→relayInstructions）。
+        // 未配 registry/对拍不一致时内部空转/拒启，异常自吞，不影响既有腿。
+        try { await relayInstructions(env, cfg, wallet, db); } catch (e) { console.log(`[bridge] 指令腿总异常（忽略）：${String(e.message).slice(0, 160)}`); }
         console.log('[bridge] tick 结束');
     },
 
@@ -73,8 +78,8 @@ export default {
                 service: 'stapleport-bridge',
                 configured: Boolean(relayer) && Boolean(env.BRIDGE_DB) && cfg.channels.length + cfg.outChannels.length > 0,
                 relayer, // authority 地址 = 通道执行权槽位应指向这里
-                channels: cfg.channels.map((c) => ({ chainIndex: c.chainIndex, srcToken: c.srcToken, spToken: c.spToken, covered: Boolean(c.covered) })),
-                outChannels: cfg.outChannels.map((c) => ({ chainIndex: c.chainIndex, vault: c.vault, token: c.token, covered: Boolean(c.covered), router: c.router || null })),
+                channels: cfg.channels.map((c) => ({ chainIndex: c.chainIndex, srcToken: c.srcToken, spToken: c.spToken })),
+                outChannels: cfg.outChannels.map((c) => ({ chainIndex: c.chainIndex, vault: c.vault, token: c.token })),
                 hub: cfg.hub,
                 dryRun: cfg.dryRun,
                 // E流 onboarding 摘要（只读 D1；未配/读不到 = null，不影响 health 本身）

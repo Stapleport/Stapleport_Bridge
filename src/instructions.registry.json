@@ -1,0 +1,28 @@
+{
+  "_comment": "通用指令信封 registry（v2 设计稿 §2/§3.1，operator 维护）。chains=涉及链 rpc/确认数；outboxes=需扫描的源链 outbox 清单；targets=targetId→{srcChain,dstChain,addr,slots[]}（slots.offset=calldata 绝对字节偏移含 4 字节 selector，kind=价格 kind）。本文件值=scripts/Launchpad/launchpad-bridge-deploy.js + launchpad-p1p2-setup.js 产物（state-launchpad-bridge.json）现抄：outbox(BSC)=31338/8546、outbox(hub)=31339/8547；买/卖第一跳源=BSC outbox，卖向二跳源=hub outbox。e2e 用 env.INSTRUCTION_REGISTRY 覆盖本地彩排值（worker 零改）。",
+  "chains": {
+    "1": { "rpcUrl": "http://127.0.0.1:8546", "confirmations": 0 },
+    "31338": { "rpcUrl": "http://127.0.0.1:8546", "confirmations": 0 },
+    "31339": { "rpcUrl": "http://127.0.0.1:8547", "confirmations": 0 }
+  },
+  "outboxes": [
+    { "chainIndex": "1", "addr": "0x1e11eDe48CA4144E427F31E0bBe2325DDE52E479" },
+    { "chainIndex": "31339", "addr": "0xD3d1443b15e2E272BE42B249056aC58f542e8b3c" }
+  ],
+  "targets": {
+    "0xcd6240e281b4d5651610fb413a8705642cb9ba0f52fb1059e91f773132ce1b27": {
+      "srcChain": "1", "dstChain": "31339", "addr": "0xB39305A36Ea714c2401cB6a9b4f7ACee14eD3382", "slots": []
+    },
+    "0x02fb74aaff6bb29ad737256c91522b4f749600fb1029035c6ef4bce1bd5844ee": {
+      "srcChain": "1", "dstChain": "31339", "addr": "0xAF0c13ded6B06ac00B0C8e9A470B8c7b8Ff1492A",
+      "slots": [{ "offset": 196, "kind": "bnbRefPrice18" }]
+    },
+    "0x88cd68872c17b035d3f89838be160a60833339920b4f619b162649e58504c766": {
+      "srcChain": "1", "dstChain": "31339", "addr": "0x90bc831ec5804c3a8D6B579723Cd1c780C3DB033",
+      "slots": [{ "offset": 228, "kind": "bnbRefPrice18" }]
+    },
+    "0xe102a6aa44189a435c7001f27f2b28d8ef252861d5081dc043ebcffe2c49ef20": {
+      "srcChain": "31339", "dstChain": "31338", "addr": "0xB6d97E88334711aE2bf219E899d8CCA3E8DfD9a8", "slots": []
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  // ============================================================================
+  // TEST relayer 配置档（78756 mini-hub ↔ Sepolia spoke）——与生产 wrangler.jsonc 完全隔离。
+  // 生产 wrangler.jsonc 不读本档；本档只被显式 `-c wrangler.test.jsonc` 使用：
+  //   实弹 test worker：wrangler deploy -c wrangler.test.jsonc
+  //   本地彩排：       wrangler dev -c wrangler.test.jsonc --env local --test-scheduled --local
+  //                    wrangler d1 migrations apply stapleport-bridge-db-test --local -c wrangler.test.jsonc
+  // 密钥走 .dev.vars（本地，软链 ../../secrets/bridge-test.dev.vars，gitignore）/
+  // wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY（实弹）。key 一律不进本档。
+  // authority = 热句 idx107 0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459（L1 部署用同址）。
+  // 地址来源：L1 产出的 Stapleport_hardhat/deployments/bridge-test-live.json（只读引用，勿在
+  // 本档手抄改值——回填时从该档取）。L1 未就绪期间 SPBRIDGE/OUT_CHANNELS 留空占位。
+  // ============================================================================
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stapleport-bridge-test",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-01",
+
+  // 零公网面：cron + GET /health（同生产口径）
+  "workers_dev": false,
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // 顶层 = 实弹 test 拓扑（78756 mini-hub + Sepolia spoke）。
+  // 本地彩排用 env.local 覆盖（见下）。
+  "vars": {
+    // ---- hub（78756 mini-hub）----
+    "HUB_CHAIN_ID": "78756",
+    "RPC_URL_HUB": "https://rpc-test.stapleport.com",
+    // L5 回填（2026-10-11）：源 deployments/bridge-78756-prod.json 的 hub.proxy。（去费版押金闸已拆、
+    // config 侧 stakePool 域删除，STAKEPOOL var 已随之清理——src/·migrations·test 均无活代码消费者。）
+    "SPBRIDGE": "0x9193eF6500503b15841607Acbc07b2aCD7CBb2A3",
+    // 本 relayer key 作为通道 authority 的目标地址（仅记录，供核对；运行时由私钥派生）
+    "BRIDGE_AUTHORITY": "0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459",
+
+    // ---- 入向通道：本测试只做出向家族（D3），入向不开 ----
+    "CHANNELS": "[]",
+
+    // ---- 出向通道：hub 锁 TAT(ERC20) → Sepolia 铸 OutToken-spN ----
+    // 字段语义（裁决 2026-10-11）：token = spoke 侧 spN(OutToken)；srcToken = hub 侧锁仓 ERC20
+    //（=地址档 hub.outToken）；presence ⇒ ERC20 出向分支（relay 回程走 executeOutReleaseERC20/
+    // outReleasedErc20/outStandingErc20）；缺省 = native。去费版删 covered 预检/gas 边际字段。
+    // 单通道硬约束：同一 chainIndex 至多一条出向通道——本拓扑只配 TAT ERC20、native 出向不开启。
+    // L1 回填形状（chainIndex 由 ChainRegistry 颁发，vault 从 bridge-test-live.json spoke.OutVault 取）：
+    // "[{\"chainIndex\":\"<chainIndex>\",\"vault\":\"<spoke.OutVault>\",\"token\":\"<spoke.OutToken>\",\"srcToken\":\"<hub.TAT/srcToken>\"}]"
+    "OUT_CHANNELS": "[{\"chainIndex\":\"1\",\"vault\":\"0x2C07E8DC1D9f80ba9612206D226720ebb3b53996\",\"token\":\"0xb55C95CDc85074Dc42Db45b8f434f7aD08a4B2A4\",\"srcToken\":\"0xE761315da44a9256bA454CE6E8D4b622A5C0eE6e\"}]",
+
+    // ---- 源链（spoke）清单：Sepolia confirmations=12（D8）；hub 侧确认数默认 2 ----
+    // rpc 可单条或数组（多条=失败轮换备援，RPC 单点缓解；首条 primary）：
+    // "{\"<chainIndex>\":{\"rpc\":[\"https://ethereum-sepolia-rpc.publicnode.com\",\"https://sepolia.drpc.org\"],\"confirmations\":12},\"hub\":{\"confirmations\":2}}"
+    "SRC_CHAINS": "{\"1\":{\"rpc\":[\"https://ethereum-sepolia-rpc.publicnode.com\",\"https://sepolia.drpc.org\"],\"confirmations\":12},\"hub\":{\"confirmations\":2}}",
+
+    // ---- onboarding 关闭（本测试走 vars 直配；链注册表直读 spBridge 门面）----
+    "API_BASE": "",
+
+    // ---- 行为 ----
+    "TICK_LOCK_SECONDS": "55",
+    "MAX_ATTEMPTS": "16",
+    "DRY_RUN": "false", // 实弹放行（2026-10-11 L5：DRY_RUN=true 观察一轮干净后切 false）
+    "WEBHOOK_URL": ""
+  },
+
+  "env": {
+    // 本地彩排档：hardhat hub-mock=31337(8545) + spoke-mock=31338(8546)。
+    // spoke 地址取自 registry.json 31338 桶现存部署；hub 地址待 L1 在 31337 部署后回填。
+    "local": {
+      "name": "stapleport-bridge-test-local",
+      "vars": {
+        "HUB_CHAIN_ID": "31337",
+        "RPC_URL_HUB": "http://127.0.0.1:8545",
+        // 取 deployments/bridge-test-local.json（L1）：门面三件=同一代理地址
+        "SPBRIDGE": "0x1eCB8071010ba3DFAd1EC09dC64f88Ba2B6c8204",
+        "BRIDGE_AUTHORITY": "0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459",
+        "CHANNELS": "[]",
+        // token=spoke spN(OutToken 0x4fCe…)；srcToken=hub 锁仓 TAT mock(0xEDbD…，=档 hub.outToken)
+        "OUT_CHANNELS": "[{\"chainIndex\":\"1\",\"vault\":\"0xe89B1674DC14C30f5C321Cfd0F60c06826E81E41\",\"token\":\"0x4fCee3dBF87D360480d0daE4D97893522F548A65\",\"srcToken\":\"0xEDbDEF27BB38842Cc84CBDbd82c30B1afD447C57\"}]",
+        // 本地冒烟：确认数置 0 即时处理（档值为 hub 1/spoke 12，实弹用）
+        "SRC_CHAINS": "{\"1\":{\"rpc\":\"http://127.0.0.1:8546\",\"confirmations\":0},\"hub\":{\"confirmations\":0}}",
+        "API_BASE": "",
+        "TICK_LOCK_SECONDS": "1",
+        "MAX_ATTEMPTS": "3",
+        "DRY_RUN": "false",
+        // vars 不被 wrangler 环境继承——env.local 必须列全（否则回落 config.js 缺省）
+        "WEBHOOK_URL": ""
+      },
+      // d1_databases 同样不被环境继承——env.local 必须自带，否则 BRIDGE_DB 未绑定
+      "d1_databases": [
+        {
+          "binding": "BRIDGE_DB",
+          "database_name": "stapleport-bridge-db-test",
+          "database_id": "e8090b85-b953-45c3-a0c2-f7b148826356"
+        }
+      ]
+    }
+  },
+
+  // ---- D1（必绑）：游标 + ops 幂等表 ----
+  // 本地彩排：--local 走 .wrangler/state 本地 sqlite，database_id 不校验（占位可）。
+  // 实弹：wrangler d1 create stapleport-bridge-db-test → 把真 id 填到 database_id（L5 执行）。
+  "d1_databases": [
+    {
+      "binding": "BRIDGE_DB",
+      "database_name": "stapleport-bridge-db-test",
+      "database_id": "e8090b85-b953-45c3-a0c2-f7b148826356"
+    }
+  ]
+}
