@@ -227,6 +227,16 @@ function claimSettle(env, cfg, db, spec, txHash) {
     })();
 }
 
+// 估 gas 连败计次（F-018b；借 fee_attempts 列，独立于 ops.attempts）：连败 ≥ stuckThreshold 写卡死
+// 终态 fee_state='<direction>_stuck' + 告警一次，重试循环按该终态跳过本行（口径同 refund/claim 先例）。
+async function noteEstimateFail(env, cfg, db, { direction, key, chainIndex, seq }) {
+    const n = await bumpStuckCount(db, direction, key);
+    if (n >= (cfg.stuckThreshold ?? 5)) {
+        await setFeeState(db, direction, key, `${direction}_stuck`);
+        await notify(env, { event: `${direction}_stuck`, channel: chainIndex, seq, note: 'estimate-fail >= threshold, terminal stop' });
+    }
+}
+
 // ---- 领奖门（召回续修二）：过期裁决路径禁 claim ----
 // 过期裁决腿复用同一 executeMint/executeRelease/executeOutMint/executeOutRelease 调用——合约过期分支
 // 同样置 minted/released/outMinted/outReleased 幂等位，并发本方向退款指令事件。此时 worker 若照常
@@ -273,10 +283,28 @@ export async function isAdjudicatedSettled(cfg, dir, ch, seq, txHash) {
         } catch { /* 回执拉取失败 → 落跨轮日志查询 */ }
     }
     try {
-        const logs = await rpc(spec.rpcUrl, 'eth_getLogs', [{ address: spec.address, topics: [spec.topic], fromBlock: '0x0', toBlock: 'latest' }]);
+        const logs = await getLogsRanged(spec.rpcUrl, spec.address, spec.topic);
         return logs.some((log) => matchInstructionLog(spec, log));
     } catch {
         return true; // fail-closed
+    }
+}
+
+// 裁决回退全链 getLogs（F-019）：先整段 0x0→latest 一次拉；RPC 限区间报错时分块续扫（块 2k/批，
+// getLogsRanged 先例：Stapleport_Web_kit/src/ops/participationBoard.js）。任一块抛错向上浮 → 调用方
+// fail-closed（宁可不 claim）；终态语义不变，仅扫描方式改。
+async function getLogsRanged(rpcUrl, address, topic, chunkBlocks = 2000n) {
+    const query = (fromBlock, toBlock) => rpc(rpcUrl, 'eth_getLogs', [{ address, topics: [topic], fromBlock, toBlock }]);
+    try {
+        return await query('0x0', 'latest');
+    } catch {
+        const tip = await latestBlock(rpcUrl); // 抛错同样上浮 → fail-closed
+        const out = [];
+        for (let start = 0n; start <= tip; start += chunkBlocks) {
+            const end = start + chunkBlocks - 1n > tip ? tip : start + chunkBlocks - 1n;
+            out.push(...(await query(toHex(start), toHex(end))));
+        }
+        return out;
     }
 }
 
@@ -460,7 +488,7 @@ async function isMinted(cfg, ch, seq) {
 // 不依赖本地留存——isolate 重启/D1 丢 payload 都能恢复）
 async function retryPendingMints(env, cfg, wallet, db, ch) {
     const rows = await db.prepare(
-        `select op_key, attempts from ops where direction='mint' and status='pending' and op_key like ?`
+        `select op_key, attempts from ops where direction='mint' and status='pending' and op_key like ? and (fee_state is null or fee_state not in ('mint_stuck'))`
     ).bind(`${ch.chainIndex}:%`).all();
     for (const row of rows.results ?? []) {
         const seq = BigInt(row.op_key.split(':')[1]);
@@ -478,6 +506,7 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
             const [token, , recipient, amount] = Array.isArray(dep) ? dep : [dep.token, dep.depositor, dep.recipient, dep.amount];
             const buyDeadline = (Array.isArray(dep) ? dep[4] : dep.buyDeadline) ?? 0n; // 尾参（§3.4 元组收缩）
             if (token.toLowerCase() !== String(ch.srcToken).toLowerCase()) continue;
+            if (row.attempts >= cfg.maxAttempts) continue; // F-018a 达上限不再重发（口径同 refund.js:183；既有失败路径已告警，不新增终态）
             // 费率闸门：达标/过期裁决 → 广播；不足 → 跳过；垃圾 → never_sweep 终态（超限不再挂人工，§3.1）
             const act = await feeAction(env, cfg, db, { dir: 1, ch, erc20: false, seq, buyDeadlineSecs: buyDeadline, direction: 'mint', key: row.op_key });
             if (act.action === 'insufficient') continue;
@@ -488,6 +517,7 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
                 args: [BigInt(ch.chainIndex), seq, ch.spToken, recipient, to18(amount, ch.srcDecimals), buyDeadline],
             });
             const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg);
+            if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'mint', key: row.op_key, chainIndex: ch.chainIndex, seq }); continue; } // F-018b 估 gas 连败计次
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, row.op_key, seq, txHash));
         } catch (e) {
             const exhausted = await failOp(db, 'mint', row.op_key, e, cfg.maxAttempts);
@@ -597,6 +627,7 @@ async function attemptRelease(env, cfg, wallet, db, ch, p, key) {
     });
     try {
         const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg);
+        if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'release', key, chainIndex: ch.chainIndex, seq: p.seq }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeRelease 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, releasedSettle(env, cfg, wallet, db, ch, key, p.seq, txHash));
     } catch (e) {
@@ -634,7 +665,7 @@ async function isReleased(cfg, ch, seq) {
 // pending 释放重试：released 命中 → done；否则用 ops.payload 里的参数重发
 async function retryPendingReleases(env, cfg, wallet, db) {
     const rows = await db.prepare(
-        `select op_key, payload, attempts from ops where direction='release' and status='pending'`
+        `select op_key, payload, attempts from ops where direction='release' and status='pending' and (fee_state is null or fee_state not in ('release_stuck'))`
     ).all();
     for (const row of rows.results ?? []) {
         try {
@@ -649,6 +680,7 @@ async function retryPendingReleases(env, cfg, wallet, db) {
                 await ensureClaim(env, cfg, wallet, db, { dir: 2, ch, seq: BigInt(p.seq) }); // 已落地 → 补领奖腿
                 continue;
             }
+            if (row.attempts >= cfg.maxAttempts) continue; // F-018a 达上限不再重发（口径同 refund.js:183）
             await attemptRelease(env, cfg, wallet, db, ch, p, row.op_key);
         } catch (e) {
             await failOp(db, 'release', row.op_key, e, cfg.maxAttempts);
@@ -762,6 +794,7 @@ async function attemptOutMint(env, cfg, wallet, db, ch, p, key, erc20, direction
     });
     try {
         const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg);
+        if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction, key, chainIndex: ch.chainIndex, seq: p.seq }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeOutMint 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, outMintedSettle(env, cfg, wallet, db, ch, key, p.seq, txHash, erc20, direction));
     } catch (e) {
@@ -803,7 +836,7 @@ async function retryPendingOutMints(env, cfg, wallet, db) {
     for (const direction of [OUT_MINT_DIR.native, OUT_MINT_DIR.erc20]) {
         const erc20 = direction === OUT_MINT_DIR.erc20;
         const rows = await db.prepare(
-            `select op_key, attempts from ops where direction=? and status='pending'`
+            `select op_key, attempts from ops where direction=? and status='pending' and (fee_state is null or fee_state not in ('out_mint_stuck','out_mint_erc20_stuck'))`
         ).bind(direction).all();
         for (const row of rows.results ?? []) {
             const [chainIndexStr, seqStr] = row.op_key.split(':');
@@ -816,6 +849,7 @@ async function retryPendingOutMints(env, cfg, wallet, db) {
                     await ensureClaim(env, cfg, wallet, db, { dir: 3, ch, erc20, seq }); // 已落地 → 补领奖腿
                     continue;
                 }
+                if (row.attempts >= cfg.maxAttempts) continue; // F-018a 达上限不再重发（口径同 refund.js:183）
                 const lockFn = erc20 ? 'outLocksErc20' : 'outLocks';
                 const lockRaw = await callRaw(cfg.hub.rpcUrl, cfg.hub.spBridge,
                     encodeFunctionData({ abi: spBridgeAbi, functionName: lockFn, args: [seq] }));
@@ -933,6 +967,7 @@ async function attemptOutRelease(env, cfg, wallet, db, ch, p, key) {
         });
     try {
         const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.spBridge, data }, cfg);
+        if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'out_release', key, chainIndex: ch.chainIndex, seq: p.outBurnId }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeOutRelease 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, outReleasedSettle(env, cfg, wallet, db, ch, key, p.outBurnId, txHash));
     } catch (e) {
@@ -973,7 +1008,7 @@ async function isOutReleased(cfg, ch, outBurnId) {
 // pending 出向赎回重试：outReleased 命中 → done；否则用 ops.payload 里的参数重发
 async function retryPendingOutReleases(env, cfg, wallet, db, ch) {
     const rows = await db.prepare(
-        `select op_key, payload, attempts from ops where direction='out_release' and status='pending' and op_key like ?`
+        `select op_key, payload, attempts from ops where direction='out_release' and status='pending' and op_key like ? and (fee_state is null or fee_state not in ('out_release_stuck'))`
     ).bind(`${ch.chainIndex}:%`).all();
     for (const row of rows.results ?? []) {
         try {
@@ -984,6 +1019,7 @@ async function retryPendingOutReleases(env, cfg, wallet, db, ch) {
                 await ensureClaim(env, cfg, wallet, db, { dir: 4, ch, seq: BigInt(p.outBurnId) }); // 已落地 → 补领奖腿
                 continue;
             }
+            if (row.attempts >= cfg.maxAttempts) continue; // F-018a 达上限不再重发（口径同 refund.js:183）
             await attemptOutRelease(env, cfg, wallet, db, ch, {
                 outBurnId: BigInt(p.outBurnId), recipient: p.recipient, amount: BigInt(p.amount),
                 buyDeadline: BigInt(p.buyDeadline ?? 0),

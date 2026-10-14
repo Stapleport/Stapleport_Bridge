@@ -89,6 +89,8 @@
 
 ## 本地 E2E
 
+本地起服务：`node scripts/dev-with-mnemonic.mjs`（从总库热句现取 idx107 派生钥，经 `--var` 注入 `BRIDGE_RELAYER_PRIVATE_KEY`；`.dev.vars` 保持占位，生产走 `wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY`）。加 `--print-args` 只打印将要执行的 argv（私钥位打码）不实起。
+
 ```bash
 cd Stapleport_hardhat
 ./node_modules/.bin/hardhat node --port 8546   # 桥外链 31338=8546；通常直接复用 scripts/test/1_start-chains.sh 已起的 node-31338
