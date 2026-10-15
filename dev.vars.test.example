@@ -1,4 +1,4 @@
-# TEST relayer 密钥档模板（78756 mini-hub ↔ Sepolia spoke）
+# TEST relayer 密钥档模板（本地联调：hub=31339 sandbox3 ↔ spoke=31338 sandbox2）
 #
 # 本模板只是形状说明，勿直接提交真实值。真实档落仓外 privateinfo 域，本地软链进仓：
 #   ln -sfn ../../secrets/bridge-test.dev.vars .dev.vars

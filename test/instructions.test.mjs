@@ -56,10 +56,10 @@ test('scaleTo18: 2 位/整数/多小数位', () => {
 
 test('envKeyOf: dstChain+outboxAddr 小写+seq；seq 恒为末段（Refunded 对账 LIKE 尾部锚定不撞 1/10）', () => {
     const addr = '0x' + 'Aa'.repeat(20);
-    assert.equal(envKeyOf('78753', addr, 7), `env:78753:${addr.toLowerCase()}:7`);
+    assert.equal(envKeyOf('31339', addr, 7), `env:31339:${addr.toLowerCase()}:7`);
     // Refunded 对账用 `op_key like 'env:%:<addr>:<seq>'`（尾部无 %，SQL LIKE 端锚定）。
     // 模拟：seq=1 的模式须不匹配 seq=10 的 key（endsWith(':1') vs key 尾 '10'）。
-    const key10 = envKeyOf('78753', addr, 10);
+    const key10 = envKeyOf('31339', addr, 10);
     const pat1Suffix = `:${1}`;
     assert.ok(key10.endsWith(':10') && !key10.endsWith(pat1Suffix));
 });
@@ -68,12 +68,12 @@ test('parseInstructionRegistry: 规范化 target/outbox/chain 键与 addr', () =
     const reg = parseInstructionRegistry({
         chains: { 31337: { rpcUrl: 'http://x', confirmations: 1 } },
         outboxes: [{ chainIndex: 31337, addr: '0x' + 'AA'.repeat(20) }],
-        targets: { ['0x' + 'BB'.repeat(32)]: { srcChain: 31337, dstChain: 78753, addr: '0x' + 'CC'.repeat(20), slots: [{ offset: 4, kind: 'bnbRefPrice18' }] } },
+        targets: { ['0x' + 'BB'.repeat(32)]: { srcChain: 31337, dstChain: 31339, addr: '0x' + 'CC'.repeat(20), slots: [{ offset: 4, kind: 'bnbRefPrice18' }] } },
     });
     assert.equal(reg.outboxes[0].chainIndex, '31337');
     assert.equal(reg.outboxes[0].addr, '0x' + 'aa'.repeat(20));
     assert.ok(reg.targets['0x' + 'bb'.repeat(32)]);
-    assert.equal(reg.targets['0x' + 'bb'.repeat(32)].dstChain, '78753');
+    assert.equal(reg.targets['0x' + 'bb'.repeat(32)].dstChain, '31339');
     assert.equal(reg.chains['31337'].confirmations, 1);
 });
 
@@ -109,7 +109,7 @@ test('relayInstructions smoke: 对拍读链失败（不可达 rpc）→ 拒启�
         INSTRUCTION_REGISTRY: JSON.stringify({
             chains: { 1: { rpcUrl: 'http://127.0.0.1:1' } },
             outboxes: [{ chainIndex: 1, addr: '0x' + 'aa'.repeat(20) }],
-            targets: { ['0x' + '11'.repeat(32)]: { srcChain: 1, dstChain: '78753', addr: '0x' + '22'.repeat(20), slots: [] } },
+            targets: { ['0x' + '11'.repeat(32)]: { srcChain: 1, dstChain: '31339', addr: '0x' + '22'.repeat(20), slots: [] } },
         }),
     };
     await assert.doesNotReject(relayInstructions(env, {}, {}, null));

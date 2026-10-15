@@ -151,7 +151,7 @@ function failEstimateFetch() {
 }
 
 const wallet = { address: '0x' + 'ab'.repeat(20), signTransaction: async () => '0xsigned' };
-const hub = { chainId: '78753', rpcUrl: 'https://hub.example', spBridge: '0x' + '11'.repeat(20) };
+const hub = { chainId: '31339', rpcUrl: 'https://hub.example', spBridge: '0x' + '11'.repeat(20) };
 const baseCfg = { hub, dryRun: false, maxAttempts: 16, stuckThreshold: 5, defaultGas: 600000n, oracleBase: '' };
 
 test('setFeeState / bumpStuckCount 落账（store SQL 形状对拍）', async () => {

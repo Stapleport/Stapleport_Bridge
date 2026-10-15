@@ -14,7 +14,7 @@ const all = JSON.parse(readFileSync(allPath, 'utf8'));
 // chain_index 补数（2026-09-28，与 Web 版 Stapleport_Web_bridge/js/registry.json 同口径）：
 // spoke 链在 hub ChainRegistry 的链索引不是 all.json 部署事实，留痕在 Token state 档
 // state-<chainId>.json 的 chainIndex 键（register-31338-hub.js 颁发、set-chain-index-31338.js
-// 回填后写回）。hub 链（31339/78753）本无 chain_index 语义；档案缺席/坏 JSON/无该键 →
+// 回填后写回）。hub 链（31339）本无 chain_index 语义；档案缺席/坏 JSON/无该键 →
 // 不写该字段。绝不编造数字。注：relayer 现行配置链路（src/config.js）的 chainIndex 取自
 // vars 通道档案与链上 ChainRegistry 枚举，本字段目前只作两仓 registry 事实对齐。
 const TOKEN_STATE_DIR = resolve(here, '..', '..', '..', 'Stapleport_hardhat', 'scripts', 'Token');
@@ -29,13 +29,14 @@ const chainIndexOf = (cid) => {
 // 2026-10-11 bridge-defee 去费版：质押池（StakePool）契约随合约面整删，白名单去该键。
 const WANT = ['BridgeVault', 'OutVault', 'StapleportBridge', 'ChainRegistry', 'StapleportBridgedToken', 'OutToken', 'WBNB', 'PancakeFactory', 'WETH9'];
 
-// 退役链黑名单：31340 stable 档已清退（RPC 8569 永不复用，2026-10-07 端口治理 registry
-// 死链清退）——all.json 桶留作冻结部署事实，本仓 registry.json 不再收录
-const RETIRED_CHAINS = ['31340'];
+// 本地链面收窄（2026-10-14）：与 Kit 正典常量 LOCAL_STEADY_CHAINS 同值——注册表只收
+// hub 31339 + spoke 31338；all.json 里别的数字桶（31337 等）留档不收录。本仓不引 web-kit，
+// 故本地声明同值常量。改口径须与 Kit 常量同步维护。
+const LOCAL_STEADY_CHAINS = ['31338', '31339'];
 
 const chains = {};
 for (const [cid, bucket] of Object.entries(all)) {
-    if (RETIRED_CHAINS.includes(cid)) continue;
+    if (!LOCAL_STEADY_CHAINS.includes(cid)) continue;
     const entry = { meta: { rpc: bucket.__meta?.rpc ?? bucket.meta?.rpc ?? null } };
     const idx = chainIndexOf(cid);
     if (idx) entry.chain_index = idx;

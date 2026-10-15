@@ -8,11 +8,11 @@
 //     --db        本地游标/幂等库文件（默认 /tmp/relay-local-e.sqlite3；删掉即重来）
 //     --out       启用出向两向（hub LockOut → 外链 executeOutMint(Swap) + 外链 BurnOut →
 //                 hub executeOutRelease）。通道参数从通道档案 "out" 键读（open-out-channel-
-//                 78753.js 留痕：outKey/outVault/spN），缺参数即退出不猜。**缺省关闭**，
+//                 31339.js 留痕：outKey/outVault/spN），缺参数即退出不猜。**缺省关闭**，
 //                 不带 --out 时行为与旧版完全一致（彩排脚本依赖现状）。
-//   env（07 彩排 hub=31339 时覆盖；缺省=78753 真值，78753 重放零改动）：
-//     RELAY_HUB_CHAIN_ID   hub chainId（默认 78753）
-//     RELAY_HUB_RPC        hub RPC（默认 https://rpc.stapleport.com）
+//   env（缺省=本地 hub 31339；覆盖见下）。
+//     RELAY_HUB_CHAIN_ID   hub chainId（默认 31339）
+//     RELAY_HUB_RPC        hub RPC（默认 http://127.0.0.1:8547）
 //     RELAY_HUB_BUCKET     all.json 桶键（默认同 RELAY_HUB_CHAIN_ID）
 //     RELAY_CHANNEL_FILE   通道档案（默认 test-channel-<RELAY_HUB_CHAIN_ID>.json）
 //     RELAY_SPOKE_RPC      源链 RPC（默认 http://127.0.0.1:8546）
@@ -25,15 +25,10 @@
 //   - D1 用 node:sqlite 本地文件顶替（只装 store.js 用到的两张表，语义同 D1：
 //     cursors 游标 + ops 幂等抢占；INSERT OR IGNORE 原生支持）。
 //   - 配置从命令行拼 env 后走 loadConfig（vars 优先口径，registry.json 兜底）。
-//   - relayer 钥从总库 secrets/mnemonics.js 派生（正式=relayer 生产档；彩排=rehearsal-relayer）
+//   - relayer 钥从总库 secrets/mnemonics.js 派生（彩排=rehearsal-relayer）
 //     （m/44'/60'/0'/0/0 = 通道 authority 0xDaFe…，与链上通道一致）。
-//   - 78753 侧交易经 kit broadcastLegacy（显式 legacy gasPrice——零 baseFee 链纪律）。
+//   - hub 侧交易经 kit broadcastLegacy（显式 legacy gasPrice——零 baseFee 链纪律）。
 //
-// 已知边界（2026-09-18 执行报告 §3）：78753 老规格链（<Istanbul，CHAINID 无效）上
-// 测试通道无押金（stakeNative 不可用），executeMint 会被 StakePool 覆盖/额度门拦下
-// （revert "coverage exceeded"/"quota: bond insufficient"）——中继管线本身（事件解码→
-// 抢占→编码→签名→广播→幂等对账）照常走完，错误按 ops 计次重试，与生产语义一致。
-// 链规格修复并补押金后，本脚本零改动即为完整双链中继。
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -58,8 +53,8 @@ const OUT = args.includes('--out');
 const DB_FILE = flag('--db', '/tmp/relay-local-e.sqlite3');
 
 // ---------------- 拓扑（hub + 31338 假想外链；地址从主仓 state 文件读） ----------------
-const HUB_CHAIN_ID = process.env.RELAY_HUB_CHAIN_ID || '78753';
-const HUB_RPC = process.env.RELAY_HUB_RPC || 'https://rpc.stapleport.com';
+const HUB_CHAIN_ID = process.env.RELAY_HUB_CHAIN_ID || '31339';
+const HUB_RPC = process.env.RELAY_HUB_RPC || 'http://127.0.0.1:8547';
 const HUB_BUCKET = process.env.RELAY_HUB_BUCKET || HUB_CHAIN_ID;
 const CHANNEL_FILE = process.env.RELAY_CHANNEL_FILE || `test-channel-${HUB_CHAIN_ID}.json`;
 const SPOKE_RPC = process.env.RELAY_SPOKE_RPC || 'http://127.0.0.1:8546';
@@ -102,17 +97,13 @@ let outChannels = [];
 if (OUT) {
     const o = stCh.out;
     if (!o?.chainIndex || !o?.spoke?.outVault || !o?.spoke?.spN) {
-        throw new Error('--out 已启用但通道档案缺 out.chainIndex/out.spoke.outVault/out.spoke.spN——先跑 scripts/Token/open-out-channel-78753.js 留痕');
+        throw new Error('--out 已启用但通道档案缺 out.chainIndex/out.spoke.outVault/out.spoke.spN——先跑 scripts/Token/open-out-channel-31339.js 留痕');
     }
     outChannels = [{ chainIndex: o.chainIndex, evmChainId: Number(o.spoke.chainId) || SPOKE_EVM_CHAIN_ID, vault: o.spoke.outVault, token: o.spoke.spN, covered: false }];
 }
 
-let relayerMnemonic;
-if (BigInt(HUB_CHAIN_ID) === 78753n) {
-    relayerMnemonic = createRequire(import.meta.url)('/root/learn/Stapleport/Stapleport/secrets/mnemonics.js').loadMnemonic('relayer'); // 正式=桥执行句生产档
-} else {
-    relayerMnemonic = createRequire(import.meta.url)('/root/learn/Stapleport/Stapleport/secrets/mnemonics.js').loadMnemonic('rehearsal-relayer'); // 彩排=旧句隔离拓扑
-}
+// 本地栈 hub = 31339，relayer 用彩排句（生产档随正式链退役留档，见 secrets/mnemonics.js）
+const relayerMnemonic = createRequire(import.meta.url)('/root/learn/Stapleport/Stapleport/secrets/mnemonics.js').loadMnemonic('rehearsal-relayer');
 const wallet = mnemonicToAccount(relayerMnemonic); // m/44'/60'/0'/0/0
 
 const env = {

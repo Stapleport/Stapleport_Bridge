@@ -16,7 +16,7 @@ import { listOnboardByStatus } from './lib/store.js';
 const chainReg = (chainId) => registry.chains?.[String(chainId)] ?? null;
 
 export function loadConfig(env) {
-    const hubChainId = String(env.HUB_CHAIN_ID || '78753');
+    const hubChainId = String(env.HUB_CHAIN_ID || '31339');
     const hubReg = chainReg(hubChainId);
     const spBridge = env.SPBRIDGE || hubReg?.StapleportBridge?.address || null;
     const hubRpc = env.RPC_URL_HUB || hubReg?.meta?.rpc || null;

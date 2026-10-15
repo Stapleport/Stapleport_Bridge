@@ -1,27 +1,6 @@
 {
   "_comment": "由 sync-registry.mjs 生成——勿手改",
   "chains": {
-    "31337": {
-      "meta": {
-        "rpc": "http://127.0.0.1:8545"
-      },
-      "StapleportBridge": {
-        "address": "0x26C08e69C0cd4965950b93CAA534cAaA5bDd984b",
-        "p_address": "0x26C08e69C0cd4965950b93CAA534cAaA5bDd984b"
-      },
-      "WBNB": {
-        "address": "0xcd83563735493eB8800534685C4F4EB824c934b9",
-        "p_address": "0xcd83563735493eB8800534685C4F4EB824c934b9"
-      },
-      "PancakeFactory": {
-        "address": "0xA2A0BD704a0eaAD5Bb45a16D1F0cC6c0f554D7B1",
-        "p_address": "0xA2A0BD704a0eaAD5Bb45a16D1F0cC6c0f554D7B1"
-      },
-      "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0x8768D727fef5F7aC933b5316B235357C50A4af37"
-      }
-    },
     "31338": {
       "meta": {
         "rpc": "http://127.0.0.1:8546"
@@ -49,42 +28,12 @@
         "rpc": "http://127.0.0.1:8547"
       },
       "StapleportBridge": {
-        "address": "0xb51364722DCd6F2EE781432cD9b004A070A5Fc59",
-        "p_address": "0xb51364722DCd6F2EE781432cD9b004A070A5Fc59"
+        "address": "0x3cBAB02221A26f46c512ffFa91Cc5854C96cc194",
+        "p_address": "0x3cBAB02221A26f46c512ffFa91Cc5854C96cc194"
       },
       "WETH9": {
         "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
         "p_address": "0xD74E1a5c9B00C61617b26e31E205cFf2434A8b7F"
-      }
-    },
-    "78753": {
-      "meta": {
-        "rpc": "https://rpc.stapleport.com"
-      },
-      "StapleportBridge": {
-        "address": "0xA8417F2C433C62D19238AebCE3dFD48E5eECBaf3",
-        "p_address": "0xA8417F2C433C62D19238AebCE3dFD48E5eECBaf3"
-      },
-      "ChainRegistry": {
-        "address": "0xAe248842a02D87EA0Dda9C153033879d6EE2406b",
-        "p_address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1"
-      },
-      "StapleportBridgedToken": {
-        "address": "0x66F226C12d15782d393f2998D9C34F0b45C32C04",
-        "p_address": "0x62461D5138e131411E5E1624C398e6e8f82D12F1"
-      },
-      "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
-      }
-    },
-    "78756": {
-      "meta": {
-        "rpc": "https://rpc-test.stapleport.com"
-      },
-      "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
       }
     }
   }

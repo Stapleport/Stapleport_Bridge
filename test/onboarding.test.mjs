@@ -169,7 +169,7 @@ const ROW = {
 
 function mkEnv(overrides = {}) {
     return {
-        HUB_CHAIN_ID: '78753',
+        HUB_CHAIN_ID: '31339',
         RPC_URL_HUB: HUB_RPC,
         SPBRIDGE: BRIDGE,
         CHANNELS: '[]',
