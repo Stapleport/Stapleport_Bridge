@@ -290,22 +290,26 @@ export async function isAdjudicatedSettled(cfg, dir, ch, seq, txHash) {
     }
 }
 
-// 裁决回退全链 getLogs（F-019）：先整段 0x0→latest 一次拉；RPC 限区间报错时分块续扫（块 2k/批，
-// getLogsRanged 先例：Stapleport_Web_kit/src/ops/participationBoard.js）。任一块抛错向上浮 → 调用方
-// fail-closed（宁可不 claim）；终态语义不变，仅扫描方式改。
-async function getLogsRanged(rpcUrl, address, topic, chunkBlocks = 2000n) {
+// 裁决回退 getLogs（F-019 修订：有界窗口，不再全历史）。
+// 旧实现先整段 0x0→latest 一次拉、失败再自 0 起 2k/批续扫：公共 RPC（publicnode）50k 块帽下
+// 整段必抛，回落分块在 Sepolia 需数千次请求 → 超时/再抛 → 调用方 fail-closed 误红（零费场景纯空转）。
+// 现改为「最近窗口回溯」：自 max(0, tip-lookbackBlocks) 起按 chunkBlocks 分段扫到 tip，窗口内任一块
+// 抛错仍向上浮 → 调用方 fail-closed（宁可不 claim，误领不可逆）；终态语义不变，仅扫描下界改。
+// 窗口覆盖口径：指令事件随本方向落地交易当轮发射，op 创建→补领奖腿必落在窗口内（relay 逐 tick 处理）；
+// 默认 100k 块（Sepolia ~14 天 / 1s 链 ~1.2 天），chunk 10k（低于常见公共 RPC 帽）。
+const LOGS_LOOKBACK_BLOCKS = 100_000n;
+const LOGS_CHUNK_BLOCKS = 10_000n;
+
+async function getLogsRanged(rpcUrl, address, topic, { lookbackBlocks = LOGS_LOOKBACK_BLOCKS, chunkBlocks = LOGS_CHUNK_BLOCKS } = {}) {
     const query = (fromBlock, toBlock) => rpc(rpcUrl, 'eth_getLogs', [{ address, topics: [topic], fromBlock, toBlock }]);
-    try {
-        return await query('0x0', 'latest');
-    } catch {
-        const tip = await latestBlock(rpcUrl); // 抛错同样上浮 → fail-closed
-        const out = [];
-        for (let start = 0n; start <= tip; start += chunkBlocks) {
-            const end = start + chunkBlocks - 1n > tip ? tip : start + chunkBlocks - 1n;
-            out.push(...(await query(toHex(start), toHex(end))));
-        }
-        return out;
+    const tip = await latestBlock(rpcUrl); // 抛错上浮 → fail-closed
+    const from = tip > lookbackBlocks ? tip - lookbackBlocks : 0n;
+    const out = [];
+    for (let start = from; start <= tip; start += chunkBlocks) {
+        const end = start + chunkBlocks - 1n > tip ? tip : start + chunkBlocks - 1n;
+        out.push(...(await query(toHex(start), toHex(end))));
     }
+    return out;
 }
 
 // 成功幂等位确认 → 触发本域领奖腿（幂等 = claimOp 抢占 + Fees state==2 预查）。异常吞并，不拖垮已 done 主 op。
@@ -358,6 +362,12 @@ async function retryPendingClaims(env, cfg, wallet, db) {
             const st = await readFees(callRaw, spec.rpcUrl, spec.to, spec.abi, spec.viewFn, spec.viewArgs);
             if (st.state === 2) {
                 await finishOp(db, row.direction, row.op_key, 'confirmed-on-retry');
+                continue;
+            }
+            if (st.state === 1) {
+                // FeeState.Refunded：费已走退款腿分账（pad→feeRecipient、reward→payer），领奖腿不适用
+                //（合约 claimXxxFee 会 revert "fee settled"）。终态关闭，防 re-arm 后每轮空发必败交易。
+                await finishOp(db, row.direction, row.op_key, 'refunded-not-claimable');
                 continue;
             }
             if (row.attempts >= cfg.maxAttempts) continue; // 领奖腿无二级 deadline，超限挂人工（现役退款腿同款）

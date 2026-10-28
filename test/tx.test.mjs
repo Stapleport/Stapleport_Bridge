@@ -1,4 +1,4 @@
-// tx.js stub 对拍（本仓无 node --test 套件，本文件为收编后的门禁）：fetch 全 stub 不碰网络。
+// tx.js stub 对拍（本仓 node --test 套件成员，仓内共 5 文件 44 例；fetch 全 stub 不碰网络）：
 // 覆盖：dryRun 不广播 / 正常路径返回裸 hash（对外形状不变）/ gasPrecheck 回落跳过广播返回 null /
 // 零价兜底。旧版行为基线：三连读(nonce/chainId/gasPrice) + sign + sendRaw，
 // kit 收编后签名统一 type:'legacy'、id 统一 1，RPC 序不变（预检先于三连读）。

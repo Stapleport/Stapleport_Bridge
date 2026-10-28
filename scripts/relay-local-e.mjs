@@ -125,7 +125,14 @@ const env = {
 // ---------------- node:sqlite 顶替 D1 ----------------
 const db = new DatabaseSync(DB_FILE);
 db.exec(`create table if not exists cursors (chain_id text, name text, last_block text, updated_at integer, primary key (chain_id, name))`);
-db.exec(`create table if not exists ops (direction text, op_key text, status text, created_at integer, updated_at integer, tx_hash text, attempts integer default 0, last_error text, payload text, primary key (direction, op_key))`);
+db.exec(`create table if not exists ops (direction text, op_key text, status text, created_at integer, updated_at integer, tx_hash text, attempts integer default 0, last_error text, payload text, fee_state text, fee_attempts integer default 0, primary key (direction, op_key))`);
+// 兼容旧档：底本 shim 的 ops 缺 bridge-fee 两列（fee_state/fee_attempts，store.js setFeeState/
+// bumpFeeAttempts/bumpStuckCount 消费）；已存在表按列补（禁删 /tmp 游标档）。口径同 relay-live-78756.mjs。
+{
+    const cols = db.prepare(`pragma table_info(ops)`).all().map((c) => c.name);
+    if (!cols.includes('fee_state')) db.exec(`alter table ops add column fee_state text`);
+    if (!cols.includes('fee_attempts')) db.exec(`alter table ops add column fee_attempts integer default 0`);
+}
 // D1 形状适配：prepare().bind().first()/all()/run() + run() 返回 {meta:{changes}}
 const d1 = {
     prepare(sql) {

@@ -1,0 +1,18 @@
+{
+  "_comment": "通用指令信封 registry（40-41 跨链发射独立档，v2.1；字段形状克隆 38-39 现役 src/instructions.registry.json）。chains=涉及链 rpc/确认数；outboxes=需扫描的源链 outbox 清单；targets=targetId→{srcChain,dstChain,addr,slots[]}（slots.offset=calldata 绝对字节偏移含 4 字节 selector，kind=价格 kind）。本文件值=scripts/Launchpad/launchpad-cross-deploy.js + launchpad-cross-setup.js 产物（state-launchpad-cross-31340.json）现抄：outbox(31340)=0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE、executor(31341)=0xB0D4afd8879eD9F52b28595d31B441D079B2Ca07。买向第一跳源=31340 outbox。worker 用 env.INSTRUCTION_REGISTRY 整体覆盖（38-39 正典文件零改）。",
+  "chains": {
+    "31340": { "rpcUrl": "http://127.0.0.1:8550", "confirmations": 0 },
+    "31341": { "rpcUrl": "http://127.0.0.1:8551", "confirmations": 0 }
+  },
+  "outboxes": [
+    { "chainIndex": "31340", "addr": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE" }
+  ],
+  "targets": {
+    "0x02fb74aaff6bb29ad737256c91522b4f749600fb1029035c6ef4bce1bd5844ee": {
+      "srcChain": "31340",
+      "dstChain": "31341",
+      "addr": "0xB0D4afd8879eD9F52b28595d31B441D079B2Ca07",
+      "slots": [{ "offset": 196, "kind": "bnbRefPrice18" }]
+    }
+  }
+}
