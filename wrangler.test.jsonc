@@ -17,8 +17,11 @@
 
   // 零公网面：cron + GET /health（同生产口径）
   "workers_dev": false,
+  // cron 已停（2026-10-31）：31338/31339 均本机 hardhat 链（loopback-only RPC），CF 边缘不可达，
+  // 六腿每 tick 全败被吞、白烧免费档 10ms CPU（24h ~700 次超限告警主因）。本地彩排走
+  // `wrangler dev --test-scheduled` 不受影响；恢复 cron 前必须先有公网可达 RPC（勿只改回 cron）。
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": []
   },
 
   // 顶层 = 本地联调拓扑（31339 hub + 31338 spoke）。更轻的 mock 彩排用 env.local 覆盖（见下）。

@@ -15,6 +15,21 @@ import { listOnboardByStatus } from './lib/store.js';
 
 const chainReg = (chainId) => registry.chains?.[String(chainId)] ?? null;
 
+// vars 层 JSON 解析缓存（L1-3，CPU 优化）：CHANNELS/OUT_CHANNELS/SRC_CHAINS 原串 → 解析产物
+// 跨 tick 复用（此前每 tick 重复 parse ~9 次）。缓存的是 vars 解析产物（纯数据、按只读对待）；
+// cfg/通道对象每 tick 照常新建——deriveTopology 会原地 push cfg.channels（下文 155/166/179），
+// 绝不能把 cfg 层数组本身落缓存。解析抛错不缓存（每 tick 照抛，语义不变）；原串变化=新键天然失效。
+const VARS_PARSE_CACHE_MAX = 16; // 键数上限（测试/多 env 场景防膨胀，超限整体清空重灌）
+const varsParseCache = new Map();
+function parseVars(raw, fallback) {
+    const s = raw || fallback;
+    if (varsParseCache.has(s)) return varsParseCache.get(s);
+    const v = JSON.parse(s); // 抛错不落缓存
+    if (varsParseCache.size >= VARS_PARSE_CACHE_MAX) varsParseCache.clear();
+    varsParseCache.set(s, v);
+    return v;
+}
+
 export function loadConfig(env) {
     const hubChainId = String(env.HUB_CHAIN_ID || '31339');
     const hubReg = chainReg(hubChainId);
@@ -28,7 +43,7 @@ export function loadConfig(env) {
     // [{ chainIndex, srcToken, spToken, srcDecimals, vault }]
     // vault/rpc 按通道与 SRC_CHAINS 直配——chainIndex 是注册表索引，与 registry.json 的
     // chainId 键是两个维度，不可互查（registry 只服务 hub 端地址查找）
-    const channels = JSON.parse(env.CHANNELS || '[]').map((c) => ({
+    const channels = parseVars(env.CHANNELS, '[]').map((c) => ({
         ...c,
         vault: c.vault || null,
         rpcUrl: srcChainsRpc(env, c.chainIndex),
@@ -40,7 +55,7 @@ export function loadConfig(env) {
     // token = spoke 侧 spN(OutToken)
     // srcToken = hub 侧锁仓 ERC20（ERC20 出向 mod；裁决：字段名 srcToken，与合约侧对齐）；
     //   presence ⇒ ERC20 出向通道；缺省 = native 出向通道（走既有 executeOutRelease/outReleased/outStanding 口）
-    const outChannels = JSON.parse(env.OUT_CHANNELS || '[]').map((c) => ({
+    const outChannels = parseVars(env.OUT_CHANNELS, '[]').map((c) => ({
         ...c,
         token: c.token || null,
         srcToken: c.srcToken || null,
@@ -100,7 +115,7 @@ function gasHeadroomX10FromEnv(env) {
 // 数组）→ SRC_CHAINS[idx].rpcs（数组）。去重保序，首条=primary（rpcUrl），多条组注册进
 // lib/rpc.js 做失败轮换（primary 抛错时顺次试备援，粘住最近可用条）。onboarding spoke 侧同用此口径。
 function srcChainsRpcs(env, chainIndex) {
-    const row = JSON.parse(env.SRC_CHAINS || '{}')[String(chainIndex)] || {};
+    const row = parseVars(env.SRC_CHAINS, '{}')[String(chainIndex)] || {};
     const out = [];
     const push = (v) => {
         for (const u of (Array.isArray(v) ? v : [v])) if (u && !out.includes(u)) out.push(u);
@@ -117,9 +132,13 @@ function srcChainsRpc(env, chainIndex) {
 }
 
 function srcChainsConf(env, chainIndex) {
-    return JSON.parse(env.SRC_CHAINS || '{}')[String(chainIndex)]?.confirmations ?? 3;
+    return parseVars(env.SRC_CHAINS, '{}')[String(chainIndex)]?.confirmations ?? 3;
 }
 export { srcChainsRpc, srcChainsRpcs, srcChainsConf };
+
+// hub 确认数（SRC_CHAINS.hub.confirmations，缺省 2）——走 vars 解析缓存（L1-3）；
+// relay.js 反向/出向两处与 refund.js hub 扫描原各自内联 JSON.parse，现共此一源（值域不变）。
+export const hubConfirmationsOf = (env) => BigInt(parseVars(env.SRC_CHAINS, '{}')?.hub?.confirmations ?? 2);
 
 // ---------------- 运行时派生层（E流） ----------------
 // 从 D1 onboard(status='active') 档案 + hub ChainRegistry 枚举拼装 vars 之外的

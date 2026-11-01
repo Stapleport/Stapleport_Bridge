@@ -55,7 +55,7 @@ const DB_FILE = flag('--db', '/tmp/relay-live-78756.sqlite');
 
 // ---------------- 进程内静态 oracle 桩（修 hub 付费方向准入门） ----------------
 // lib/fee.js 的准入门（admitCheck）用 oracle 归一出「relayer 奖励估值」，要求用户预付 paid ≥ reward×5+padFloor。
-// 78756 与 Sepolia 均为测试网、原生币无真实 USD 价，且公网 oracle（stapleport-oracle.kflc.workers.dev）
+// 78756 与 Sepolia 均为测试网、原生币无真实 USD 价，且公网 oracle（https://oracle.stapleport.com）
 // 不支持 chainId 11155111 → fetchGas 落 FALLBACK_PRICE(bnbUsdt=600)/FALLBACK_GAS_PRICE(10 gwei)
 // → dir2/dir3 归一价放大，reward 估 ≈6.9/9.8 ETH，准入需 paid ≥ reward×5 ≈ 34.5/49 ETH（远超腿钱包余额）
 // → hub 付费方向（dir2 burn 赎回 / dir3 lockOut）永不放行。

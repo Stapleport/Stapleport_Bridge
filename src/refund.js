@@ -9,21 +9,23 @@
 // 可靠性设计与 relay.js 同口径：cursor 存 D1；ops INSERT OR IGNORE 抢占 + 合约幂等旗标双保险；
 // 广播后短轮询幂等视图对账，未确认留给下一轮；失败 failOp 计入 attempts，超 maxAttempts 告警挂起。
 // 退款腿自身不带二级 deadline（终态救援语义，失败保持 pending 重试至人工）。
-import { encodeFunctionData, decodeEventLog, decodeFunctionResult, parseAbiItem, getEventSelector } from 'viem';
+import { encodeFunctionData, decodeEventLog, decodeFunctionResult } from 'viem';
 import {
     vaultAbi, spBridgeAbi, outVaultAbi,
-    DEPOSIT_REFUNDED_EVENT, RELEASE_SKIPPED_EVENT, OUT_MINT_REFUNDED_EVENT, OUT_RELEASE_SKIPPED_EVENT,
+    DEPOSIT_REFUNDED_TOPIC0, RELEASE_SKIPPED_TOPIC0, OUT_MINT_REFUNDED_TOPIC0, OUT_RELEASE_SKIPPED_TOPIC0,
 } from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex } from './lib/rpc.js';
 import { sendTx } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp, setFeeState, bumpStuckCount } from './lib/store.js';
+import { hubConfirmationsOf } from './config.js';
 import { notify } from './notify.js';
 import { ZERO_ADDRESS } from '@stapleport/worker-kit';
 
-const DEPOSIT_REFUNDED_TOPIC = getEventSelector(parseAbiItem(`event ${DEPOSIT_REFUNDED_EVENT}`));
-const RELEASE_SKIPPED_TOPIC = getEventSelector(parseAbiItem(`event ${RELEASE_SKIPPED_EVENT}`));
-const OUT_MINT_REFUNDED_TOPIC = getEventSelector(parseAbiItem(`event ${OUT_MINT_REFUNDED_EVENT}`));
-const OUT_RELEASE_SKIPPED_TOPIC = getEventSelector(parseAbiItem(`event ${OUT_RELEASE_SKIPPED_EVENT}`));
+// 扫链 topic0 = 构建期生成常量（L1-1，scripts/gen-abi.mjs；值与原运行时 getEventSelector 计算逐字一致）
+const DEPOSIT_REFUNDED_TOPIC = DEPOSIT_REFUNDED_TOPIC0;
+const RELEASE_SKIPPED_TOPIC = RELEASE_SKIPPED_TOPIC0;
+const OUT_MINT_REFUNDED_TOPIC = OUT_MINT_REFUNDED_TOPIC0;
+const OUT_RELEASE_SKIPPED_TOPIC = OUT_RELEASE_SKIPPED_TOPIC0;
 
 // 出向通道按族定位（token=address(0) 表 native 族、非零表 ERC20 族；§1.2 OutReleaseSkipped.token 语义）
 function outChannelFor(cfg, chainIndex, token) {
@@ -189,7 +191,7 @@ async function retryPendingRefunds(env, cfg, wallet, db) {
 }
 
 const uniqChainIndexes = (arr) => [...new Set(arr.map((c) => String(c.chainIndex)))];
-const hubConfirmations = (env) => BigInt(JSON.parse(env.SRC_CHAINS || '{}')?.hub?.confirmations ?? 2);
+const hubConfirmations = hubConfirmationsOf; // SRC_CHAINS hub 确认数（经 config vars 解析缓存，L1-3；值域不变）
 
 // hub：DepositRefunded（dir1）+ OutReleaseSkipped（dir4）双 topic 单游标
 async function refundHubScan(env, cfg, wallet, db) {

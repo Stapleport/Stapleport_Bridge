@@ -46,7 +46,7 @@
     // 准入/裁决重估的 gasPrice+原生币价原料源；空 = 全走 kit FALLBACK 保守值（能跑但门槛失真）。
     // 生产=CF oracle（已部署，chainId 97/31337/31338 面）；本地彩排 runner（relay-local-e.mjs）
     // 不读这里，自指本地 oracle dev 8799——本地链 CF 不可达（unreachable 属预期）。
-    "ORACLE_BASE": "https://stapleport-oracle.kflc.workers.dev",
+    "ORACLE_BASE": "https://oracle.stapleport.com",
 
     // ---- 行为 ----
     // tick 内存锁：防同 isolate 重叠

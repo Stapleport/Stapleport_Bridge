@@ -13,6 +13,19 @@ import { onboardingTick, onboardSummary } from './onboarding.js';
 // 2026-09-17 起走 kit createTickLock（lockMs 首个 tick 时从 cfg 取；KV 事故案底见 kit lock.js）
 let tickLock = null;
 
+// wallet 缓存（L1-2，CPU 优化）：privateKeyToAccount = secp256k1 点乘（每 tick 固定开销），
+// isolate 内按 pk 串缓存至多 1 条（换 secret → 键变天然失效；派生抛错不落缓存，保持原 throw 语义）。
+let walletCacheKey = null;
+let walletCacheVal = null;
+function walletOf(pk) {
+    if (walletCacheKey !== pk) {
+        const w = privateKeyToAccount(pk); // 抛错在前：键不动，防下次同串误返回旧串的缓存
+        walletCacheVal = w;
+        walletCacheKey = pk;
+    }
+    return walletCacheVal;
+}
+
 export default {
     async scheduled(controller, env, ctx) {
         const cfg = loadConfig(env);
@@ -26,7 +39,7 @@ export default {
         if (!env.BRIDGE_DB) {
             return console.log('[bridge] 未绑定 BRIDGE_DB（D1 游标/幂等表无处落），空转');
         }
-        const wallet = privateKeyToAccount(pk);
+        const wallet = walletOf(pk);
         cfg.relayerAddress = wallet.address;
         const db = env.BRIDGE_DB;
 
@@ -70,7 +83,7 @@ export default {
             let relayer = null;
             if (pkOk) {
                 try {
-                    relayer = privateKeyToAccount(String(env.BRIDGE_RELAYER_PRIVATE_KEY).trim()).address;
+                    relayer = walletOf(String(env.BRIDGE_RELAYER_PRIVATE_KEY).trim()).address;
                 } catch { /* 不暴露错误细节 */ }
             }
             return Response.json({

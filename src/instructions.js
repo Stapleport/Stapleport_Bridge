@@ -10,8 +10,8 @@
 // 幂等/重试照既有 D1 模式：claimOp 抢占 + 链上 instructions(seq).state 终态对账
 // （FeeState 0=Pending/1=Claimed/2=Refunded）+ 广播后短轮询；失败 failOp 计次。
 // 启动对拍拒启（§3.1）：registry target 与链上 targetRegistry 不一致 → 告警并整腿停。
-import { encodeFunctionData, decodeEventLog, decodeFunctionResult, parseAbiItem, getEventSelector } from 'viem';
-import { instructionOutboxAbi, INSTRUCTION_EVENT, REFUNDED_EVENT } from './lib/abi.js';
+import { encodeFunctionData, decodeEventLog, decodeFunctionResult } from 'viem';
+import { instructionOutboxAbi, INSTRUCTION_TOPIC0, REFUNDED_TOPIC0 } from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex } from './lib/rpc.js';
 import { sendTx } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp } from './lib/store.js';
@@ -21,8 +21,9 @@ import { notify } from './notify.js';
 
 // 哨兵（设计稿 §3.3 / InstructionOutbox.SENTINEL_PRICE18，逐字一致）
 export const SENTINEL_PRICE18 = '0x7072316365000000000000000000000000000000000000000000000000000001';
-const INSTRUCTION_TOPIC = getEventSelector(parseAbiItem(`event ${INSTRUCTION_EVENT}`));
-const REFUNDED_TOPIC = getEventSelector(parseAbiItem(`event ${REFUNDED_EVENT}`));
+// 扫链 topic0 = 构建期生成常量（L1-1，scripts/gen-abi.mjs；值与原运行时 getEventSelector 计算逐字一致）
+const INSTRUCTION_TOPIC = INSTRUCTION_TOPIC0;
+const REFUNDED_TOPIC = REFUNDED_TOPIC0;
 
 // op 名（设计稿 §0.3）：env_exec 转发 / env_refund 过期退款 / env_claim 成功领奖。
 export const OP = { exec: 'env_exec', refund: 'env_refund', claim: 'env_claim' };

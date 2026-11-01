@@ -1,11 +1,22 @@
-// 桥交互所需的最小 ABI（viem human-readable）。registry.json 里存合约地址，这里存形状。
+// 桥交互所需的最小 ABI（viem human-readable 唯一事实源）。registry.json 里存合约地址，这里存形状。
 // 2026-10-11 去费版（bridge-defee）：费面/swap 族/押金闸全删，签名随收缩（topic0 更替；
 // 全新部署零兼容负担）。契约唯一正典=bridge-defee-plan §3.2 函数签名集/§3.3 事件集；
 // 改合约必须同步本文件（既有文件头纪律）。
-import { parseAbi } from 'viem';
+//
+// L1-1（CPU 优化，2026-10-31）：本文件字符串数组只作事实源，运行时零解析——
+// scripts/gen-abi.mjs 构建期生成 src/lib/abi.gen.js（JSON ABI + 事件 topic0 常量，
+// viem 的 encode/decode 直收 JSON ABI），下方 re-export 保持既有导入面（vaultAbi 等
+// 名字与消费者零改动）。改 human 数组后必须重跑：node scripts/gen-abi.mjs
+// （新旧行数/编码逐字节等价由 test/abi-gen.test.mjs 门禁锁死）。
+export {
+    vaultAbi, spBridgeAbi, registryAbi, outVaultAbi, erc20Abi, instructionOutboxAbi,
+    DEPOSIT_TOPIC0, BURN_TOPIC0, LOCKOUT_TOPIC0, BURNOUT_TOPIC0,
+    DEPOSIT_REFUNDED_TOPIC0, RELEASE_SKIPPED_TOPIC0, OUT_MINT_REFUNDED_TOPIC0, OUT_RELEASE_SKIPPED_TOPIC0,
+    INSTRUCTION_TOPIC0, REFUNDED_TOPIC0,
+} from './abi.gen.js';
 
 // 源链资金池（我方部署；authority = 本 worker 地址才调得动 executeRelease/refundDeposit）
-export const vaultAbi = parseAbi([
+export const vaultAbiHuman = [
     'event Deposit(uint256 indexed seq, uint256 chainIndex, address indexed token, address indexed depositor, address recipient, uint256 amount, uint256 buyDeadline)',
     // 过期落地指令事件（vault_in.executeRelease 过期分支发射，relayer 次轮拾取执行 refund_burn 腿）
     'event ReleaseSkipped(uint256 chainIndex, uint256 outId, address spToken, address recipient, uint256 amount, uint256 buyDeadline)',
@@ -30,14 +41,14 @@ export const vaultAbi = parseAbi([
     'function feeRecipient() view returns (address)',
     'function setLegB(uint8 dir, uint128 val)',
     'function setFeeRecipient(address r)',
-]);
+];
 
 // Stapleport 桥（executeMint/executeOutRelease 仅通道 authority 可调；minted/outReleased
 // 做链上幂等对账；outLocks/outStanding 做出向参数现读与在库预检）
 // E流 onboarding 增补：getChannel/getOutChannel（存在性先读 + spToken 回填）。openChannel/
 // openOutChannel 去费后转 MANAGE-only、开通道动作转人工，本 ABI 仅保留收缩签名备读。
 // 链注册表宿主 = spBridge 门面（registry 读口直走 spBridge 地址 + registryAbi，见 config/onboarding）。
-export const spBridgeAbi = parseAbi([
+export const spBridgeAbiHuman = [
     'event BurnRequest(uint256 indexed seq, bytes32 indexed channelKey, address spToken, uint256 chainIndex, address indexed recipient, uint256 amount, uint256 buyDeadline)',
     'event LockOut(uint256 indexed seq, bytes32 indexed outKey, uint256 chainIndex, address indexed recipient, uint256 amount, uint256 buyDeadline)',
     // 过期落地指令事件（hub 侧）：dir1 mint 过期 → DepositRefunded；dir4 outrelease 过期 → OutReleaseSkipped
@@ -86,20 +97,20 @@ export const spBridgeAbi = parseAbi([
     'function setLegB(uint8 dir, uint128 val)',
     'function setFeeRecipient(address r)',
     'function setFeeClaimAuthority(address a)',
-]);
+];
 
 // hub ChainRegistry（E流 onboarding/派生层）：注册无许可、rpc 规范化=转小写+去尾/
 // （规范化在同侧 JS 镜像实现于 onboarding.js normalizeRpc）。宿主地址 = spBridge 门面。
-export const registryAbi = parseAbi([
+export const registryAbiHuman = [
     'function registerChain(uint64 evmChainId, string rpc) returns (uint256 idx)',
     'function lookupByChainId(uint64 evmChainId) view returns (uint256[])',
     'function resolve(uint256 idx) view returns (uint256 finalIdx, (uint64 evmChainId, string rpc, uint256 mergedInto, bool active) chain)',
     'function chains(uint256 idx) view returns ((uint64 evmChainId, string rpc, uint256 mergedInto, bool active))',
     'function nextIndex() view returns (uint256)',
-]);
+];
 
 // 外链出向金库（executeOutMint 仅通道 authority 可调；outMinted 做链上幂等对账）
-export const outVaultAbi = parseAbi([
+export const outVaultAbiHuman = [
     'event BurnOut(uint256 indexed outBurnId, address indexed recipient, uint256 amount, uint256 buyDeadline)',
     // 过期落地指令事件（dir3 outmint 过期；vault_out.executeOutMint 过期分支发射）
     'event OutMintRefunded(uint256 chainIndex, uint256 inId)',
@@ -126,12 +137,12 @@ export const outVaultAbi = parseAbi([
     'function feeRecipient() view returns (address)',
     'function setLegB(uint8 dir, uint128 val)',
     'function setFeeRecipient(address r)',
-]);
+];
 
-export const erc20Abi = parseAbi([
+export const erc20AbiHuman = [
     'function decimals() view returns (uint8)',
     'function balanceOf(address) view returns (uint256)',
-]);
+];
 
 // 事件签名哈希（与合约事件逐字段对齐，改合约必须同步这里）
 // 2026-10-11 去费版：Deposit/LockOut/BurnOut 删 swapTo·minOut/fee 尾参 ⇒ 串变、topic0 随之更替；
@@ -150,8 +161,8 @@ export const OUT_RELEASE_SKIPPED_EVENT = 'OutReleaseSkipped(uint256,uint256,addr
 // 与 T0 已落合约 Stapleport_Bridge_hardhat/contracts/envelope/InstructionOutbox.sol 逐字段对齐
 // （事件 topic0 逐字冻结；targetRegistry 三返回 getter；instructions getter 尾参 state 终态机）。
 // relayer 只消费：Instruction/Refunded 事件（扫链）+ refund/claim（源链动作）+ targetRegistry（对拍读口）。
-export const instructionOutboxAbi = parseAbi([
-    'event Instruction(uint256 seq, bytes32 indexed targetId, bytes data, uint256 value, uint256 fee, uint64 deadline, bytes priceSnapshot, bytes refundSpec, address payer)',
+export const instructionOutboxAbiHuman = [
+    'event Instruction(uint256 seq, bytes32 indexed targetId, bytes data, uint256 value, uint64 deadline, bytes priceSnapshot, bytes refundSpec, address payer)',
     'event Refunded(uint256 seq, bytes refundSpec, bool ok)',
     'event TargetRegistered(bytes32 targetId, uint64 dstChainIndex, address addr)',
     'function send((bytes32 targetId, bytes data, uint256 value, uint64 deadline, bytes priceSnapshot, bytes refundSpec, address payer) s) payable returns (uint256 seq)',
@@ -166,6 +177,6 @@ export const instructionOutboxAbi = parseAbi([
     'function instructions(uint256 seq) view returns (bytes32 targetId, bytes data, uint256 value, uint256 fee, uint128 pad, uint64 deadline, bytes priceSnapshot, bytes refundSpec, address payer, uint8 state)',
     'function seq() view returns (uint256)',
     'function authority() view returns (address)',
-]);
+];
 export const INSTRUCTION_EVENT = 'Instruction(uint256,bytes32,bytes,uint256,uint256,uint64,bytes,bytes,address)';
 export const REFUNDED_EVENT = 'Refunded(uint256,bytes,bool)';

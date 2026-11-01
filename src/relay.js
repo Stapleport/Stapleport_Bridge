@@ -9,32 +9,47 @@
 //   D1 丢失最多多烧几笔被合约拦下的空交易，绝不双铸/双放
 // - 广播后不强等回执：op 保持 pending，下一轮先用链上幂等位对账（minted/released）
 //   命中即 done；未命中且 attempts 未超限则重发
-import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters, parseAbiItem, getEventSelector } from 'viem';
-import { vaultAbi, spBridgeAbi, outVaultAbi, DEPOSIT_EVENT, BURN_EVENT, LOCKOUT_EVENT, BURNOUT_EVENT, DEPOSIT_REFUNDED_EVENT, RELEASE_SKIPPED_EVENT, OUT_MINT_REFUNDED_EVENT, OUT_RELEASE_SKIPPED_EVENT } from './lib/abi.js';
+import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters } from 'viem';
+import {
+    vaultAbi, spBridgeAbi, outVaultAbi,
+    DEPOSIT_TOPIC0, BURN_TOPIC0, LOCKOUT_TOPIC0, BURNOUT_TOPIC0,
+    DEPOSIT_REFUNDED_TOPIC0, RELEASE_SKIPPED_TOPIC0, OUT_MINT_REFUNDED_TOPIC0, OUT_RELEASE_SKIPPED_TOPIC0,
+} from './lib/abi.js';
 import { rpc, callRaw, latestBlock, toHex } from './lib/rpc.js';
 import { sendTx } from './lib/tx.js';
 import { getCursor, setCursor, claimOp, finishOp, failOp, setFeeState, bumpFeeAttempts, bumpStuckCount } from './lib/store.js';
 import {
     fetchGas, oracleFacts, admitCheck, sweepCheck, estimateLegAWei, readPadFloor, readFees, readLegB,
 } from './lib/fee.js';
-import { to18, from18 } from './config.js';
+import { to18, from18, hubConfirmationsOf } from './config.js';
 import { notify } from './notify.js';
 // 2026-09-23 起收编 WorkerKit 单源（原仓内常量退役）
 import { ZERO_ADDRESS } from '@stapleport/worker-kit';
 
 export { ZERO_ADDRESS };
 
-// channelKey 与合约同构：keccak256(abi.encode(chainIndex, srcToken))
-export const channelKeyOf = (chainIndex, srcToken) =>
-    keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }], [BigInt(chainIndex), srcToken]));
+// channelKey 与合约同构：keccak256(abi.encode(chainIndex, srcToken))。
+// 结果缓存（L1-5）：键 = 入参原样模板串（不归一化——入参形态差异只会多出重复缓存项，
+// 不会串值：同键 ⇒ BigInt/地址串渲染相同 ⇒ 计算值恒同）；键空间=通道级有限集合。
+const channelKeyCache = new Map();
+export const channelKeyOf = (chainIndex, srcToken) => {
+    const k = `${chainIndex}:${srcToken}`;
+    let v = channelKeyCache.get(k);
+    if (v === undefined) {
+        v = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }], [BigInt(chainIndex), srcToken]));
+        channelKeyCache.set(k, v);
+    }
+    return v;
+};
 
 // 出向通道键与合约同构：(chainIndex, address(0))——native 无 srcToken
 export const outKeyOf = (chainIndex) => channelKeyOf(chainIndex, ZERO_ADDRESS);
 
-const DEPOSIT_TOPIC = getEventSelector(parseAbiItem(`event ${DEPOSIT_EVENT}`));
-const BURN_TOPIC = getEventSelector(parseAbiItem(`event ${BURN_EVENT}`));
-const LOCKOUT_TOPIC = getEventSelector(parseAbiItem(`event ${LOCKOUT_EVENT}`));
-const BURNOUT_TOPIC = getEventSelector(parseAbiItem(`event ${BURNOUT_EVENT}`));
+// 扫链 topic0 = 构建期生成常量（L1-1，scripts/gen-abi.mjs；值与原运行时 getEventSelector 计算逐字一致）
+const DEPOSIT_TOPIC = DEPOSIT_TOPIC0;
+const BURN_TOPIC = BURN_TOPIC0;
+const LOCKOUT_TOPIC = LOCKOUT_TOPIC0;
+const BURNOUT_TOPIC = BURNOUT_TOPIC0;
 
 // ================= 预付 gas 费率面（bridge-fee-design §3 / §3.4）=================
 // 费率乘数/常数单一出处 = kit（经 lib/fee.js 再导出）；本文件不出现 ×10/×5 字面量。
@@ -243,10 +258,10 @@ async function noteEstimateFail(env, cfg, db, { direction, key, chainIndex, seq 
 // claimXxxFee 会把用户本该拿回的 reward 全付 feeRecipient（资金分账错误），且退款腿 _payFeeRefund
 // 因 state≠Escrowed revert「fee settled」→ 本金转移回滚、退款永久卡死。故 claim 前以「本方向退款
 // 指令事件存在与否」定该 op 终态性质：命中=过期退款路径（禁 claim，退款腿接力），未命中=正常成功。
-const DEPOSIT_REFUNDED_TOPIC = getEventSelector(parseAbiItem(`event ${DEPOSIT_REFUNDED_EVENT}`));
-const RELEASE_SKIPPED_TOPIC = getEventSelector(parseAbiItem(`event ${RELEASE_SKIPPED_EVENT}`));
-const OUT_MINT_REFUNDED_TOPIC = getEventSelector(parseAbiItem(`event ${OUT_MINT_REFUNDED_EVENT}`));
-const OUT_RELEASE_SKIPPED_TOPIC = getEventSelector(parseAbiItem(`event ${OUT_RELEASE_SKIPPED_EVENT}`));
+const DEPOSIT_REFUNDED_TOPIC = DEPOSIT_REFUNDED_TOPIC0; // topic0 生成常量（L1-1，同上）
+const RELEASE_SKIPPED_TOPIC = RELEASE_SKIPPED_TOPIC0;
+const OUT_MINT_REFUNDED_TOPIC = OUT_MINT_REFUNDED_TOPIC0;
+const OUT_RELEASE_SKIPPED_TOPIC = OUT_RELEASE_SKIPPED_TOPIC0;
 
 // 指令事件定位描述：发出链/地址/topic/解码 abi/键匹配（seq 语义随域）。
 function instructionEventSpec(cfg, dir, ch, seq) {
@@ -546,7 +561,7 @@ export async function relayReverse(env, cfg, wallet, db) {
     try {
         await retryPendingReleases(env, cfg, wallet, db);
         const head = await latestBlock(hub.rpcUrl);
-        const conf = BigInt(JSON.parse(env.SRC_CHAINS || '{}')?.hub?.confirmations ?? 2);
+        const conf = hubConfirmationsOf(env); // SRC_CHAINS hub 确认数（经 config vars 解析缓存，L1-3）
         const safeTo = head - conf;
         let cursor = await getCursor(db, 'hub', 'burn');
         if (cursor === null) {
@@ -732,7 +747,7 @@ export async function relayOutForward(env, cfg, wallet, db) {
     try {
         await retryPendingOutMints(env, cfg, wallet, db);
         const head = await latestBlock(hub.rpcUrl);
-        const conf = BigInt(JSON.parse(env.SRC_CHAINS || '{}')?.hub?.confirmations ?? 2);
+        const conf = hubConfirmationsOf(env); // SRC_CHAINS hub 确认数（经 config vars 解析缓存，L1-3）
         const safeTo = head - conf;
         let cursor = await getCursor(db, 'hub', 'outlock');
         if (cursor === null) {

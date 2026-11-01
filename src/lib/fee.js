@@ -10,6 +10,7 @@
 // 纯算术函数不碰 IO（node --test 直测）；IO 读取（oracle fetch / 链上 getter）走显式注入。
 // 乘数/常数（×10 奖励 / ×5 准入 / 执行 gas 键 / SP floor / 失败兜底价）一律经 kit 单源——
 // 本模块只 import kit 的纯函数与 FALLBACK_PRICE，不重抄任何乘数常数。
+import { encodeFunctionData, decodeFunctionResult } from 'viem'; // 静态导入（L1-4：原三处 await import('viem')，viem 已在模块图内、动态导入纯开销）
 import { FALLBACK_PRICE, rewardEstWei, admitOk, sweepCostFloorWei } from 'stapleport-web-kit/bridgefee';
 
 const WEI18 = 10n ** 18n;
@@ -123,7 +124,6 @@ export function sweepCheck({ paidWei, legAWei, legBWei }) {
 
 // 读 padFloorDirN()（链上强制下限 view，D6 前端/worker 直读正典源）。
 export async function readPadFloor(callRaw, rpcUrl, to, abi, fn) {
-    const { encodeFunctionData, decodeFunctionResult } = await import('viem');
     const raw = await callRaw(rpcUrl, to, encodeFunctionData({ abi, functionName: fn }));
     return decodeFunctionResult({ abi, functionName: fn, data: raw });
 }
@@ -131,7 +131,6 @@ export async function readPadFloor(callRaw, rpcUrl, to, abi, fn) {
 // 读 Fees getter（dir1 depositFees / dir2 burnFees / dir3 outLockFees(|Erc20) / dir4 outBurnFees）。
 // 返回 { pad:bigint, reward:bigint, payer, state:number }。state 枚举：0=Escrowed 1=Refunded 2=Claimed。
 export async function readFees(callRaw, rpcUrl, to, abi, fn, args) {
-    const { encodeFunctionData, decodeFunctionResult } = await import('viem');
     const raw = await callRaw(rpcUrl, to, encodeFunctionData({ abi, functionName: fn, args }));
     const r = decodeFunctionResult({ abi, functionName: fn, data: raw });
     const [pad, reward, payer, state] = Array.isArray(r)
@@ -142,7 +141,6 @@ export async function readFees(callRaw, rpcUrl, to, abi, fn, args) {
 
 // 读 legBDirN()（storage 常数，A 原生币计价）。
 export async function readLegB(callRaw, rpcUrl, to, abi, fn) {
-    const { encodeFunctionData, decodeFunctionResult } = await import('viem');
     const raw = await callRaw(rpcUrl, to, encodeFunctionData({ abi, functionName: fn }));
     return decodeFunctionResult({ abi, functionName: fn, data: raw });
 }
