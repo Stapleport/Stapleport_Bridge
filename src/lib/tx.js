@@ -10,8 +10,25 @@
 import { gasPrecheck, broadcastLegacy, nativeBalance } from '@stapleport/worker-kit';
 import { rpc } from './rpc.js';
 
-export async function sendTx(rpcUrl, wallet, tx, opts = {}) {
+// 分层签名钥解析（单钥 / 双钥/多钥部署共用同一份中继代码）：
+//   signer = 单钥 viem account（含 signTransaction，既有单钥部署）→ 原样返回；
+//   signer = 分层对象 { base, hub, src, fee } → 按 layer 取该层钥；
+//   该层钥缺失 → 返回 null（调用方空转跳过，绝不回落到别的钥误签——错钥交易必然 revert）。
+// layer 语义：hub=78756 hub 通道 authority（executeMint/executeOutRelease/executeOutRefund）；
+//   src=spoke 侧 Vault/OutVault authority；fee=hub dir2 领奖槽 feeClaimAuthority；base=兜底/管理口。
+export function resolveSigner(signer, layer = 'base') {
+    if (!signer) return null;
+    if (typeof signer.signTransaction === 'function') return signer; // 单钥账户
+    return signer[layer] ?? null;
+}
+
+export async function sendTx(rpcUrl, signer, tx, opts = {}, layer = 'base') {
     const { dryRun = false, defaultGas = 600000n, gasHeadroomX10 = 12n } = opts;
+    const wallet = resolveSigner(signer, layer);
+    if (!wallet) {
+        console.log(`[bridge] ${layer} 腿缺钥（分层钥未配置），跳过本轮广播（不误签）`);
+        return null;
+    }
     if (dryRun) {
         console.log(`[bridge] DRY_RUN ${wallet.address} → ${tx.to} data=${tx.data.slice(0, 74)}…`);
         return null;

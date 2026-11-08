@@ -67,7 +67,7 @@ export async function fetchGas(oracleBase, chainId, { fetchImpl = globalThis.fet
 export const FALLBACK_GAS_PRICE_WEI = 10n ** 10n;
 
 // oracle 响应 → { gasPriceWei, priceScaled }；失败（null）或 gwei 字段缺失落 FALLBACK 保守值。
-// stableHint=true（SPUSD 等锚定币侧）→ 价固定 1 USD；否则用 oracle nativePriceUsdt / FALLBACK bnbUsdt。
+// stableHint=true（USDSP 等锚定币侧）→ 价固定 1 USD；否则用 oracle nativePriceUsdt / FALLBACK bnbUsdt。
 export function oracleFacts(raw, { stableHint = false } = {}) {
     const fallbackPrice = stableHint ? 1 : FALLBACK_PRICE.bnbUsdt;
     if (!raw) {

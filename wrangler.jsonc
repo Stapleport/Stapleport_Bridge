@@ -15,8 +15,11 @@
     "crons": ["* * * * *"]
   },
 
-  // 公开配置（非敏感）。密钥只有一把 BRIDGE_RELAYER_PRIVATE_KEY（= 通道 authority 地址），
-  // 走 wrangler secret，绝不放这里：wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY
+  // 公开配置（非敏感）。密钥走 wrangler secret，绝不放这里：
+  //   BRIDGE_RELAYER_PRIVATE_KEY       = 源链/spoke 腿 authority 钥（单钥部署亦作全部腿）
+  //   BRIDGE_HUB_RELAYER_PRIVATE_KEY   = hub 通道 authority 钥（可选；缺省回落上一把）
+  //   BRIDGE_FEE_CLAIM_RELAYER_PRIVATE_KEY = hub dir2 领奖槽 feeClaimAuthority 钥（可选；缺省回落 base）
+  // 78756 现网=双钥分向：hub in/out 通道 authority 用 relayer 句 idx1，Sepolia spoke 腿仍用热句 idx107。
   "vars": {
     // ---- hub（stapleport 端）----
     // spBridge 地址（registry.json 为底，可用 SPBRIDGE / RPC_URL_HUB 覆盖）

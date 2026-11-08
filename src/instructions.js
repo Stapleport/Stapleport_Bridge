@@ -122,7 +122,9 @@ async function attemptExec(env, cfg, wallet, db, reg, ob, t, key, p) {
         // T1 域代 patch（T6 授权）：value 类型需同时满足 precheck(JSON-safe) 与 viem 签名(bigint)，
         // 二者互斥；零值省略（设计 §1.2 初期买/卖 value 恒 0）→ precheck 落 '0x0'、签名落 0n。
         const envValue = BigInt(p.value ?? 0) === 0n ? undefined : BigInt(p.value ?? 0);
-        const txHash = await sendTx(dstRpc, wallet, { to: t.addr, data: p.data, value: envValue }, cfg);
+        // 签名钥按目标链分：hub（78756）腿 = hub 层，其余 = spoke 层
+        const keyLayer = dstRpc && dstRpc === cfg.hub?.rpcUrl ? 'hub' : 'src';
+        const txHash = await sendTx(dstRpc, wallet, { to: t.addr, data: p.data, value: envValue }, cfg, keyLayer);
         if (txHash == null) { await setLastError(db, OP.exec, key, 'estimate-fail (target call skipped)'); return; }
         console.log(`[bridge] env_exec 转发广播: ${txHash} targetId=${p.targetId} seq=${p.seq}`);
         await finishOp(db, OP.exec, key, txHash);
@@ -145,7 +147,7 @@ async function claimInstruction(env, cfg, wallet, db, reg, ob, seq) {
     const ch = reg.chains[ob.chainIndex];
     const data = encodeFunctionData({ abi: instructionOutboxAbi, functionName: 'claim', args: [BigInt(seq)] });
     try {
-        const txHash = await sendTx(ch.rpcUrl, wallet, { to: ob.addr, data }, cfg);
+        const txHash = await sendTx(ch.rpcUrl, wallet, { to: ob.addr, data }, cfg, 'src');
         if (txHash == null) { await setLastError(db, OP.claim, ckey, 'estimate-fail'); return; }
         await finishOp(db, OP.claim, ckey, txHash);
         await notify(env, { event: 'instruction_claim_sent', seq: String(seq), tx: txHash });
@@ -161,7 +163,7 @@ async function attemptRefund(env, cfg, wallet, db, reg, ob, key, seq) {
     const ch = reg.chains[ob.chainIndex];
     const data = encodeFunctionData({ abi: instructionOutboxAbi, functionName: 'refund', args: [BigInt(seq)] });
     try {
-        const txHash = await sendTx(ch.rpcUrl, wallet, { to: ob.addr, data }, cfg);
+        const txHash = await sendTx(ch.rpcUrl, wallet, { to: ob.addr, data }, cfg, 'src');
         if (txHash == null) { await setLastError(db, OP.refund, key, 'estimate-fail (deadline not reached?)'); return; }
         console.log(`[bridge] env_refund 广播: ${txHash} seq=${seq}`);
         await finishOp(db, OP.refund, key, txHash);

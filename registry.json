@@ -7,20 +7,20 @@
       },
       "chain_index": "1",
       "BridgeVault": {
-        "address": "0x2b961E3959b79326A8e7F64Ef0d2d825707669b5",
-        "p_address": "0x2b961E3959b79326A8e7F64Ef0d2d825707669b5"
+        "address": "0x8e80FFe6Dc044F4A766Afd6e5a8732Fe0977A493",
+        "p_address": "0x8e80FFe6Dc044F4A766Afd6e5a8732Fe0977A493"
       },
       "OutVault": {
-        "address": "0xD2e813C297f3cf9985bAa5331CEC80778755BF2a",
-        "p_address": "0xD2e813C297f3cf9985bAa5331CEC80778755BF2a"
+        "address": "0xAD4e198623A5E2723e19E4D4a6ECF72B1D19FE4B",
+        "p_address": "0xAD4e198623A5E2723e19E4D4a6ECF72B1D19FE4B"
       },
       "StapleportBridgedToken": {
-        "address": "0x532323de74BAb864b7005D910E5bD8562D038b9b",
-        "p_address": "0x532323de74BAb864b7005D910E5bD8562D038b9b"
+        "address": "0x06cd7788D77332cF1156f1E327eBC090B5FF16a3",
+        "p_address": "0x06cd7788D77332cF1156f1E327eBC090B5FF16a3"
       },
       "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
+        "address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb",
+        "p_address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb"
       }
     },
     "31339": {
@@ -28,12 +28,12 @@
         "rpc": "http://127.0.0.1:8547"
       },
       "StapleportBridge": {
-        "address": "0xf5059a5D33d5853360D16C683c16e67980206f36",
-        "p_address": "0xf5059a5D33d5853360D16C683c16e67980206f36"
+        "address": "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f",
+        "p_address": "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f"
       },
       "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
+        "address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb",
+        "p_address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb"
       }
     },
     "31340": {
@@ -42,20 +42,20 @@
       },
       "chain_index": "1",
       "BridgeVault": {
-        "address": "0x524F04724632eED237cbA3c37272e018b3A7967e",
-        "p_address": "0x524F04724632eED237cbA3c37272e018b3A7967e"
+        "address": "0x32467b43BFa67273FC7dDda0999Ee9A12F2AaA08",
+        "p_address": "0x32467b43BFa67273FC7dDda0999Ee9A12F2AaA08"
       },
       "OutVault": {
-        "address": "0xde46dABb403Afc77DD67B6C69Bbd44B9347AE0e7",
-        "p_address": "0xde46dABb403Afc77DD67B6C69Bbd44B9347AE0e7"
+        "address": "0x4AE5AF759E17599107c1C688bfaCF6131C376D51",
+        "p_address": "0x4AE5AF759E17599107c1C688bfaCF6131C376D51"
       },
       "StapleportBridgedToken": {
-        "address": "0x16eBC21B3d38Db5e3EE1a022bEBA8Ec87D4CDbe6",
-        "p_address": "0x16eBC21B3d38Db5e3EE1a022bEBA8Ec87D4CDbe6"
+        "address": "0x4ABEaCA4b05d8fA4CED09D26aD28Ea298E8afaC8",
+        "p_address": "0x4ABEaCA4b05d8fA4CED09D26aD28Ea298E8afaC8"
       },
       "WETH9": {
-        "address": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
-        "p_address": "0x0165878A594ca255338adfa4d48449f69242Eb8F"
+        "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "p_address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
       }
     },
     "31341": {
@@ -63,12 +63,12 @@
         "rpc": "http://127.0.0.1:8551"
       },
       "StapleportBridge": {
-        "address": "0x8f86403A4DE0BB5791fa46B8e795C547942fE4Cf",
-        "p_address": "0x8f86403A4DE0BB5791fa46B8e795C547942fE4Cf"
+        "address": "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB",
+        "p_address": "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB"
       },
       "WETH9": {
-        "address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8",
-        "p_address": "0xbDd1b4c25Bd8356E1D93a9A8d9f306A7Dbb34fa8"
+        "address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb",
+        "p_address": "0x34d55D127aE03d10Bc303218a14D9455cc4D19Cb"
       }
     }
   }

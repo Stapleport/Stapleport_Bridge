@@ -6,7 +6,7 @@
   //   本地彩排：       wrangler dev -c wrangler.test.jsonc --test-scheduled --local
   //                    wrangler d1 migrations apply stapleport-bridge-db-test --local -c wrangler.test.jsonc
   // 密钥走 .dev.vars（本地，软链 ../../secrets/bridge-test.dev.vars，gitignore）。
-  // authority = 热句 idx107 0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459（L1 部署用同址）。
+  // authority = rehearsal relayer 句 idx0 0xDaFeBe91…（2026-11-03 链上实读 31338 OutVault；旧值 idx107 系 L1 部署代遗留）。
   // 地址来源：deployments/node31339/StapleportBridge.json + deployments/node31338/{OutVault,
   // StapleportBridgedToken}.json（只读引用，勿在本档手抄改值——回填时从该档取）。
   // ============================================================================
@@ -32,7 +32,7 @@
     // deployments/node31339/StapleportBridge.json 的 proxy（门面三件=同一代理地址）。
     "SPBRIDGE": "0x3cBAB02221A26f46c512ffFa91Cc5854C96cc194",
     // 本 relayer key 作为通道 authority 的目标地址（仅记录，供核对；运行时由私钥派生）
-    "BRIDGE_AUTHORITY": "0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459",
+    "BRIDGE_AUTHORITY": "0xDaFeBe913e1e635C043E2a65EEb1D5f64411bE43",
 
     // ---- 入向通道：本测试只做出向家族（D3），入向不开 ----
     "CHANNELS": "[]",
@@ -44,7 +44,7 @@
     // 单通道硬约束：同一 chainIndex 至多一条出向通道——本拓扑只配 TAT ERC20、native 出向不开启。
     // 地址档（deployments/node31338/{OutVault,StapleportBridgedToken}.json + node31339/TAT.json）：
     // [{ chainIndex, vault(node31338 OutVault), token(node31338 StapleportBridgedToken), srcToken(node31339 TAT) }]
-    "OUT_CHANNELS": "[{\"chainIndex\":\"1\",\"vault\":\"0x0B4Ce84dFbC2048B142A7Ca87e7099D695a940fC\",\"token\":\"0x5D433BeAea98d30e98950599b79C5bCFfDd278ab\",\"srcToken\":\"0xD74E1a5c9B00C61617b26e31E205cFf2434A8b7F\"}]",
+    "OUT_CHANNELS": "[{\"chainIndex\":\"1\",\"vault\":\"0xAD4e198623A5E2723e19E4D4a6ECF72B1D19FE4B\",\"token\":\"0x06cd7788D77332cF1156f1E327eBC090B5FF16a3\",\"srcToken\":\"0xD74E1a5c9B00C61617b26e31E205cFf2434A8b7F\"}]",
 
     // ---- 源链（spoke）清单：spoke=31338 本机链，confirmations=2；hub 侧确认数默认 2 ----
     // rpc 可单条或数组（多条=失败轮换备援，RPC 单点缓解；首条 primary）：
@@ -71,7 +71,8 @@
         "RPC_URL_HUB": "http://127.0.0.1:8545",
         // 取 deployments/bridge-test-local.json（L1）：门面三件=同一代理地址
         "SPBRIDGE": "0x1eCB8071010ba3DFAd1EC09dC64f88Ba2B6c8204",
-        "BRIDGE_AUTHORITY": "0x2ED19F69F3C54FA3Ea2B8B7EC0C43997A267A459",
+        // vault 0xe89B 部署已失（31337 内存链重启丢），L1 重部署时回填
+        "BRIDGE_AUTHORITY": "0xDaFeBe913e1e635C043E2a65EEb1D5f64411bE43",
         "CHANNELS": "[]",
         // token=spoke spN(OutToken 0x4fCe…)；srcToken=hub 锁仓 TAT mock(0xEDbD…，=档 hub.outToken)
         "OUT_CHANNELS": "[{\"chainIndex\":\"1\",\"vault\":\"0xe89B1674DC14C30f5C321Cfd0F60c06826E81E41\",\"token\":\"0x4fCee3dBF87D360480d0daE4D97893522F548A65\",\"srcToken\":\"0xEDbDEF27BB38842Cc84CBDbd82c30B1afD447C57\"}]",

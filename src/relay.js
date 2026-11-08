@@ -9,6 +9,10 @@
 //   D1 丢失最多多烧几笔被合约拦下的空交易，绝不双铸/双放
 // - 广播后不强等回执：op 保持 pending，下一轮先用链上幂等位对账（minted/released）
 //   命中即 done；未命中且 attempts 未超限则重发
+//
+// 签名钥：各函数入参 `wallet` = 单钥账户或分层钥对象 { base, hub, src, fee }（lib/tx.js
+// resolveSigner 解析）。hub=78756 通道 authority 钥、src=spoke 侧 authority 钥、fee=hub
+// dir2 领奖槽 feeClaimAuthority 钥；单钥部署（一钥兼全部）继续原样可用。
 import { encodeFunctionData, decodeEventLog, decodeFunctionResult, keccak256, encodeAbiParameters } from 'viem';
 import {
     vaultAbi, spBridgeAbi, outVaultAbi,
@@ -57,7 +61,7 @@ const BURNOUT_TOPIC = BURNOUT_TOPIC0;
 // 4=requestOutBurn/executeOutRelease。费 escrow 落链见设计稿 §1.2。
 
 // 费率域描述（escrow 落链/键 + A/B 链口径）。aRpc/bRpc 供 oracle 归一，aChainId/bChainId 取
-// evm chainId（缺失 → null → oracle 落 FALLBACK_PRICE）。stability hint：hub=SPUSD（稳定）。
+// evm chainId（缺失 → null → oracle 落 FALLBACK_PRICE）。stability hint：hub=USDSP（稳定）。
 function feeDomain(cfg, dir, ch, erc20) {
     const hub = cfg.hub;
     const src = cfg.srcChains[String(ch?.chainIndex)];
@@ -157,12 +161,17 @@ async function feeAction(env, cfg, db, { dir, ch, erc20 = false, seq, buyDeadlin
 
 // ---- 领奖腿（§3.4 新 direction ×5；幂等 = claimOp + Fees getter state==2）----
 
-// 领奖描述（域/编码/幂等视图）。
+// 领奖描述（域/编码/幂等视图）。keyLayer = 该腿签名钥层（lib/tx.js resolveSigner）：
+//   dir1 claimDepositFee 在 spoke vault（spoke authority）→ src；
+//   dir2 claimBurnFee 在 hub，权限槽 feeClaimAuthority（独立于通道 authority）→ fee；
+//   dir3 claimOutLockFee 在 hub，守 outChannel authority → hub；
+//   dir4 claimOutBurnFee 在 spoke OutVault（spoke authority）→ src。
 function claimSpec(cfg, dir, ch, erc20, seq) {
     const hub = cfg.hub;
     if (dir === 1) {
         return {
             direction: 'fee_claim_mint', key: `${ch.chainIndex}:${seq}`, chainIndex: String(ch.chainIndex),
+            keyLayer: 'src',
             rpcUrl: ch.rpcUrl, to: ch.vault, abi: vaultAbi, fn: 'claimDepositFee', args: [seq],
             viewFn: 'depositFees', viewArgs: [seq],
             payload: { dir: 1, chainIndex: String(ch.chainIndex), seq: String(seq) },
@@ -171,6 +180,7 @@ function claimSpec(cfg, dir, ch, erc20, seq) {
     if (dir === 2) {
         return {
             direction: 'fee_claim_release', key: String(seq), chainIndex: String(ch?.chainIndex ?? ''),
+            keyLayer: 'fee',
             rpcUrl: hub.rpcUrl, to: hub.spBridge, abi: spBridgeAbi, fn: 'claimBurnFee', args: [seq],
             viewFn: 'burnFees', viewArgs: [seq],
             payload: { dir: 2, seq: String(seq) },
@@ -180,6 +190,7 @@ function claimSpec(cfg, dir, ch, erc20, seq) {
         return {
             direction: erc20 ? 'fee_claim_out_mint_e20' : 'fee_claim_out_mint', key: `${ch.chainIndex}:${seq}`,
             chainIndex: String(ch.chainIndex),
+            keyLayer: 'hub',
             rpcUrl: hub.rpcUrl, to: hub.spBridge, abi: spBridgeAbi,
             fn: erc20 ? 'claimOutLockFeeErc20' : 'claimOutLockFee', args: [seq],
             viewFn: erc20 ? 'outLockFeesErc20' : 'outLockFees', viewArgs: [seq],
@@ -188,6 +199,7 @@ function claimSpec(cfg, dir, ch, erc20, seq) {
     }
     return {
         direction: 'fee_claim_out_release', key: `${ch.chainIndex}:${seq}`, chainIndex: String(ch.chainIndex),
+        keyLayer: 'src',
         rpcUrl: ch.rpcUrl, to: ch.vault, abi: outVaultAbi, fn: 'claimOutBurnFee', args: [seq],
         viewFn: 'outBurnFees', viewArgs: [seq],
         payload: { dir: 4, chainIndex: String(ch.chainIndex), seq: String(seq) },
@@ -202,7 +214,7 @@ export async function attemptClaim(env, cfg, wallet, db, spec) {
     }
     const data = encodeFunctionData({ abi: spec.abi, functionName: spec.fn, args: spec.args });
     try {
-        const txHash = await sendTx(spec.rpcUrl, wallet, { to: spec.to, data }, cfg);
+        const txHash = await sendTx(spec.rpcUrl, wallet, { to: spec.to, data }, cfg, spec.keyLayer ?? 'base');
         if (txHash == null) {
             // 预估失败跳过（tx.js 统一收口，发前预估门）：连续失败计次，达阈值写卡死终态停试（追派二）
             const n = await bumpStuckCount(db, spec.direction, spec.key);
@@ -471,7 +483,7 @@ async function forwardChannel(env, cfg, wallet, db, ch, src) {
         });
         let txHash = null;
         try {
-            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg);
+            txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg, 'hub');
             console.log(`[bridge] executeMint 广播: ${txHash ?? '(dry)'}`);
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, key, seq, txHash));
         } catch (e) {
@@ -541,7 +553,7 @@ async function retryPendingMints(env, cfg, wallet, db, ch) {
                 abi: spBridgeAbi, functionName: 'executeMint',
                 args: [BigInt(ch.chainIndex), seq, ch.spToken, recipient, to18(amount, ch.srcDecimals), buyDeadline],
             });
-            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg);
+            const txHash = await sendTx(cfg.hub.rpcUrl, wallet, { to: cfg.hub.spBridge, data }, cfg, 'hub');
             if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'mint', key: row.op_key, chainIndex: ch.chainIndex, seq }); continue; } // F-018b 估 gas 连败计次
             await ctxWait(env, mintedSettle(env, cfg, wallet, db, ch, row.op_key, seq, txHash));
         } catch (e) {
@@ -651,7 +663,7 @@ async function attemptRelease(env, cfg, wallet, db, ch, p, key) {
         args: [BigInt(p.seq), p.srcToken, p.recipient, amountSrc, BigInt(p.buyDeadline ?? 0n)],
     });
     try {
-        const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg);
+        const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg, 'src');
         if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'release', key, chainIndex: ch.chainIndex, seq: p.seq }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeRelease 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, releasedSettle(env, cfg, wallet, db, ch, key, p.seq, txHash));
@@ -818,7 +830,7 @@ async function attemptOutMint(env, cfg, wallet, db, ch, p, key, erc20, direction
         args: [p.seq, p.recipient, p.amount, BigInt(p.buyDeadline ?? 0n), erc20],
     });
     try {
-        const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg);
+        const txHash = await sendTx(srcRpc, wallet, { to: ch.vault, data }, cfg, 'src');
         if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction, key, chainIndex: ch.chainIndex, seq: p.seq }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeOutMint 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, outMintedSettle(env, cfg, wallet, db, ch, key, p.seq, txHash, erc20, direction));
@@ -991,7 +1003,7 @@ async function attemptOutRelease(env, cfg, wallet, db, ch, p, key) {
             args: [BigInt(ch.chainIndex), p.outBurnId, p.recipient, p.amount, BigInt(p.buyDeadline ?? 0n)],
         });
     try {
-        const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.spBridge, data }, cfg);
+        const txHash = await sendTx(hubRpc, wallet, { to: cfg.hub.spBridge, data }, cfg, 'hub');
         if (txHash == null) { await noteEstimateFail(env, cfg, db, { direction: 'out_release', key, chainIndex: ch.chainIndex, seq: p.outBurnId }); return; } // F-018b 估 gas 连败计次
         console.log(`[bridge] executeOutRelease 广播: ${txHash ?? '(dry)'}`);
         await ctxWait(env, outReleasedSettle(env, cfg, wallet, db, ch, key, p.outBurnId, txHash));

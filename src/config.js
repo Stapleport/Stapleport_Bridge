@@ -39,7 +39,8 @@ export function loadConfig(env) {
         console.log('[bridge] hub 未配齐（RPC_URL_HUB / SPBRIDGE / registry），反向与 mint 全部空转');
     }
 
-    // 通道清单：本 relayer key 作为 authority 服务的通道
+    // 通道清单：本 relayer 服务的通道（签名钥按层取：hub 腿=BRIDGE_HUB_RELAYER_PRIVATE_KEY，
+    // spoke 腿=BRIDGE_RELAYER_PRIVATE_KEY；单钥部署两 env 同值即可）
     // [{ chainIndex, srcToken, spToken, srcDecimals, vault }]
     // vault/rpc 按通道与 SRC_CHAINS 直配——chainIndex 是注册表索引，与 registry.json 的
     // chainId 键是两个维度，不可互查（registry 只服务 hub 端地址查找）

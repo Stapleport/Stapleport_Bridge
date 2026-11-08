@@ -1,5 +1,7 @@
 # Stapleport_Bridge — 跨链桥 relayer 客户端
 
+> 跨仓联动：先查 [../../docs/project/linkages/README.md](../../docs/project/linkages/README.md "ref:general.linkages")
+
 零公网面的桥执行客户端（Cloudflare Worker，纯 cron 驱动）。任何人自托管这份代码、
 换上自己的私钥，就成为一名 relayer（通道 authority），为通道执行 mint/release 赚小费。
 
@@ -61,7 +63,8 @@
    wrangler d1 create stapleport-bridge-db   # id 填进 wrangler.jsonc
    wrangler d1 migrations apply stapleport-bridge-db --local   # 远端去掉 --local
    node scripts/sync-registry.mjs            # 从合约仓同步地址
-   wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY
+   wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY          # 源链/spoke 腿 authority 钥
+   wrangler secret put BRIDGE_HUB_RELAYER_PRIVATE_KEY      # hub 通道 authority 钥（可选；缺省回落上一把）
    # wrangler.jsonc 里配 CHANNELS / SRC_CHAINS / HUB_CHAIN_ID
    wrangler deploy
    ```
@@ -89,7 +92,7 @@
 
 ## 本地 E2E
 
-本地起服务：`node scripts/dev-with-mnemonic.mjs`（从总库热句现取 idx107 派生钥，经 `--var` 注入 `BRIDGE_RELAYER_PRIVATE_KEY`；`.dev.vars` 保持占位，生产走 `wrangler secret put BRIDGE_RELAYER_PRIVATE_KEY`）。加 `--print-args` 只打印将要执行的 argv（私钥位打码）不实起。
+本地起服务：`node scripts/dev-with-mnemonic.mjs`（双钥分向：`BRIDGE_RELAYER_PRIVATE_KEY`=热句 idx107（spoke/base 腿）、`BRIDGE_HUB_RELAYER_PRIVATE_KEY`=relayer 句 idx1（hub 腿），经 `--var` 注入；`.dev.vars` 保持占位，生产走 `wrangler secret put` 同名两条）。加 `--print-args` 只打印将要执行的 argv（私钥位打码）不实起。
 
 ```bash
 cd Stapleport_hardhat

@@ -3,8 +3,9 @@
 // clone 底本 = scripts/relay-local-e.mjs（本地 31339↔31338 彩排版）。差异仅 6 处（C6 契约）：
 //   ① hub 默认 78756 / https://rpc-test.stapleport.com / 桶 78756 / 档案 test-channel-78756.json
 //   ② spoke state 源 state-31338.json → state-11155111.json（B 线产物）
-//   ③ relayer 钥 rehearsal-relayer(idx0) → 热句 idx107（walletAt({slot:"hot"},107)，
-//      viem account；禁 rehearsal 槽）
+//   ③ relayer 钥 rehearsal-relayer(idx0) → 双钥分向（2026-11-03 换轨）：hub 腿=relayer 句 idx1
+//      （walletAt({slot:"relayer"},1)；通道 authority 已转 0x5965…67FB），spoke 腿=热句 idx107
+//      （walletAt({slot:"hot"},107)；Sepolia authority 用户裁决冻结）；禁 rehearsal 槽
 //   ④ evmChainId 映射 spoke=11155111（经 state-11155111.json.chainId 自动取）
 //   ⑤ confirmations hub=0 / spoke=6（C11 定 hub=2；但 78756 按需出块 + conf=2 使 burn 事件须等
 //      2 新块才被拾取，孤笔事件在 buyDeadline(5min) 后才落地 → executeRelease 过期转 ReleaseSkipped、
@@ -122,11 +123,21 @@ if (OUT) {
     outChannels = [{ chainIndex: o.chainIndex, evmChainId: Number(o.spoke.chainId) || SPOKE_EVM_CHAIN_ID, vault: o.spoke.outVault, token: o.spoke.spN, covered: false }];
 }
 
-// 78756 hub relayer = 热句 idx107（通道 authority 0x2ED1…A459；禁 rehearsal 槽）。
+// 78756 双钥分向（2026-11-03 换轨，hub in/out 通道 authority 转 relayer 句 idx1）：
+//   hub 腿（in/out 通道 authority：executeMint/executeOutRelease/executeOutRefund）=
+//     relayer 句 idx1 0x59653A8930ca97c5B5Bad797A3aDC890247667FB；
+//   spoke 腿（Sepolia Vault/OutVault authority，用户裁决冻结）= 热句 idx107 0x2ED1…A459；
+//   fee 腿（hub dir2 领奖槽 feeClaimAuthority，未换轨）= 热句 idx107。
 // walletAt 返回 ethers HDNodeWallet，取 privateKey 转 viem account（relay.js 经 kit broadcastLegacy
-// 调 wallet.signTransaction，须 viem account 形态）。
+// 调 wallet.signTransaction，须 viem account 形态）；relay.js 的 sendTx 按层取钥（lib/tx.js resolveSigner）。
 const { walletAt } = createRequire(import.meta.url)('/root/learn/Stapleport/Stapleport/Stapleport_hardhat/scripts/tool/keyring.js');
-const wallet = privateKeyToAccount(walletAt({ slot: 'hot' }, 107).privateKey);
+const hubWallet = privateKeyToAccount(walletAt({ slot: 'relayer' }, 1).privateKey);
+const srcWallet = privateKeyToAccount(walletAt({ slot: 'hot' }, 107).privateKey);
+const wallet = { base: srcWallet, hub: hubWallet, src: srcWallet, fee: srcWallet };
+const HUB_AUTHORITY = '0x59653A8930ca97c5B5Bad797A3aDC890247667FB';
+if (hubWallet.address.toLowerCase() !== HUB_AUTHORITY.toLowerCase()) {
+    throw new Error(`hub 钥派生=${hubWallet.address} ≠ 通道 authority ${HUB_AUTHORITY}——钥域漂移，停`);
+}
 
 const env = {
     HUB_CHAIN_ID,
@@ -142,7 +153,8 @@ const env = {
     MAX_ATTEMPTS: '3',
     API_BASE: '', // onboarding 关闭
     ORACLE_BASE: ORACLE_STUB_BASE, // 非空 → fetchGas 走进程内桩（见 ORACLE_STUB 注释）
-    BRIDGE_RELAYER_PRIVATE_KEY: wallet.privateKey,
+    BRIDGE_RELAYER_PRIVATE_KEY: srcWallet.privateKey, // spoke/base 腿（idx107）
+    BRIDGE_HUB_RELAYER_PRIVATE_KEY: hubWallet.privateKey, // hub 腿（relayer idx1）
 };
 
 // ---------------- node:sqlite 顶替 D1 ----------------
@@ -174,8 +186,10 @@ const d1 = {
 
 // ---------------- tick 循环 ----------------
 const cfg = loadConfig(env);
-cfg.relayerAddress = wallet.address;
-console.log(`[live-runner] relayer=${wallet.address} 通道数=${cfg.channels.length} 出向=${OUT ? `${cfg.outChannels.length}（四向）` : '关'} hub=${cfg.hub.spBridge} dry=${cfg.dryRun} db=${DB_FILE}`);
+cfg.relayerAddress = srcWallet.address;
+cfg.hubRelayerAddress = hubWallet.address;
+cfg.feeRelayerAddress = srcWallet.address;
+console.log(`[live-runner] spokeRelayer=${srcWallet.address} hubRelayer=${hubWallet.address} 通道数=${cfg.channels.length} 出向=${OUT ? `${cfg.outChannels.length}（四向）` : '关'} hub=${cfg.hub.spBridge} dry=${cfg.dryRun} db=${DB_FILE}`);
 
 for (let i = 1; i <= TICKS; i++) {
     console.log(`\n===== tick ${i}/${TICKS} =====`);

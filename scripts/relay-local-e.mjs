@@ -25,8 +25,10 @@
 //   - D1 用 node:sqlite 本地文件顶替（只装 store.js 用到的两张表，语义同 D1：
 //     cursors 游标 + ops 幂等抢占；INSERT OR IGNORE 原生支持）。
 //   - 配置从命令行拼 env 后走 loadConfig（vars 优先口径，registry.json 兜底）。
-//   - relayer 钥从总库 secrets/mnemonics.js 派生（彩排=rehearsal-relayer）
+//   - relayer 钥从总库 secrets/mnemonics.js 派生（彩排=rehearsal-relayer 旧句）
 //     （m/44'/60'/0'/0/0 = 通道 authority 0xDaFe…，与链上通道一致）。
+//   - 范围：只跑 31339↔31338 彩排域；78756 公网测试网用 scripts/relay-live-78756.mjs
+//     （双钥分向：hub=relayer 句 idx1 / spoke=热句 idx107）。
 //   - hub 侧交易经 kit broadcastLegacy（显式 legacy gasPrice——零 baseFee 链纪律）。
 //
 import { readFileSync } from 'node:fs';

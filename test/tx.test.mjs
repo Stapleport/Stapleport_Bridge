@@ -4,7 +4,7 @@
 // kit 收编后签名统一 type:'legacy'、id 统一 1，RPC 序不变（预检先于三连读）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sendTx, nativeBalance } from '../src/lib/tx.js';
+import { sendTx, nativeBalance, resolveSigner } from '../src/lib/tx.js';
 
 const ADDR = '0x' + 'ab'.repeat(20);
 const TO = '0x' + 'cd'.repeat(20);
@@ -112,6 +112,57 @@ test('零 baseFee 链：gasPrice 读到 0x0 → 兜底 1 wei；nativeBalance 再
         await sendTx('https://rpc.example', w, { to: TO, data: '0xdeadbeef' });
         assert.equal(w.signed[0].gasPrice, 1n);
         assert.equal(await nativeBalance('https://rpc.example', ADDR), 10n ** 18n);
+    } finally {
+        globalThis.fetch = orig;
+    }
+});
+
+// ---- 分层签名钥（78756 hub/spoke 分钥）----
+test('resolveSigner：单钥账户原样返回（既有单钥部署零回归）', () => {
+    const w = stubWallet();
+    assert.equal(resolveSigner(w, 'hub'), w);
+    assert.equal(resolveSigner(w, 'src'), w);
+});
+
+test('resolveSigner：分层对象按层取钥，缺层返回 null', () => {
+    const base = stubWallet();
+    const hub = stubWallet();
+    const signer = { base, hub, src: base, fee: base };
+    assert.equal(resolveSigner(signer, 'base'), base);
+    assert.equal(resolveSigner(signer, 'hub'), hub);
+    assert.equal(resolveSigner(signer, 'src'), base);
+    assert.equal(resolveSigner(signer, 'fee'), base);
+    assert.equal(resolveSigner({ base, src: base }, 'hub'), null); // 缺层不回落
+});
+
+test('sendTx：指定层缺钥 → 空转（一个 RPC 都不打、不签名），返回 null', async () => {
+    const base = stubWallet();
+    const hub = stubWallet();
+    const { fetchImpl, calls } = stubFetch();
+    const orig = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+        const out = await sendTx('https://rpc.example', { base, hub }, { to: TO, data: '0xdeadbeef' }, {}, 'src');
+        assert.equal(out, null);
+        assert.equal(calls.length, 0);
+        assert.equal(hub.signed.length, 0);
+        assert.equal(base.signed.length, 0);
+    } finally {
+        globalThis.fetch = orig;
+    }
+});
+
+test('sendTx：分层对象按层签名（hub 层用 hub 钥广播）', async () => {
+    const base = stubWallet();
+    const hub = stubWallet();
+    const { fetchImpl } = stubFetch();
+    const orig = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+        const hash = await sendTx('https://rpc.example', { base, hub }, { to: TO, data: '0xdeadbeef' }, {}, 'hub');
+        assert.equal(hash, '0xhash0');
+        assert.equal(hub.signed.length, 1);
+        assert.equal(base.signed.length, 0);
     } finally {
         globalThis.fetch = orig;
     }

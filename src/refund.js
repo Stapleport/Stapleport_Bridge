@@ -35,6 +35,8 @@ function outChannelFor(cfg, chainIndex, token) {
 }
 
 // 退款动作描述：目标链/合约/编码 + 幂等视图（发送前预查 + 收尾对账共用）
+// keyLayer = 该腿签名钥层（lib/tx.js resolveSigner）：spoke 侧 Vault/OutVault → src；
+//   hub executeBurnRefund（inChannel authority）/ executeOutRefund（outChannel authority）→ hub。
 function resolveRefund(cfg, direction, p) {
     const hub = cfg.hub;
     if (direction === 'refund_deposit') {
@@ -43,6 +45,7 @@ function resolveRefund(cfg, direction, p) {
         if (!src?.rpcUrl || !ch?.vault) return null;
         const seq = BigInt(p.seq);
         return {
+            keyLayer: 'src',
             rpcUrl: src.rpcUrl, to: ch.vault, abi: vaultAbi, fn: 'refundDeposit', args: [seq],
             viewTo: ch.vault, viewAbi: vaultAbi, viewFn: 'depositRefunded', viewArgs: [seq],
         };
@@ -50,6 +53,7 @@ function resolveRefund(cfg, direction, p) {
     if (direction === 'refund_burn') {
         const seq = BigInt(p.outId);
         return {
+            keyLayer: 'hub',
             rpcUrl: hub.rpcUrl, to: hub.spBridge, abi: spBridgeAbi, fn: 'executeBurnRefund',
             args: [BigInt(p.chainIndex), p.spToken, seq, p.recipient, BigInt(p.amount)],
             viewTo: hub.spBridge, viewAbi: spBridgeAbi, viewFn: 'burnRefunded', viewArgs: [seq],
@@ -59,6 +63,7 @@ function resolveRefund(cfg, direction, p) {
         const erc = direction === 'refund_outlock_e20';
         const seq = BigInt(p.seq);
         return {
+            keyLayer: 'hub',
             rpcUrl: hub.rpcUrl, to: hub.spBridge, abi: spBridgeAbi,
             fn: erc ? 'executeOutRefundERC20' : 'executeOutRefund', args: [seq],
             viewTo: hub.spBridge, viewAbi: spBridgeAbi,
@@ -71,6 +76,7 @@ function resolveRefund(cfg, direction, p) {
         if (!src?.rpcUrl || !ch?.vault) return null;
         const id = BigInt(p.outBurnId);
         return {
+            keyLayer: 'src',
             rpcUrl: src.rpcUrl, to: ch.vault, abi: outVaultAbi, fn: 'executeOutBurnRefund', args: [id],
             viewTo: ch.vault, viewAbi: outVaultAbi, viewFn: 'outBurnRefunded', viewArgs: [id],
         };
@@ -130,7 +136,7 @@ export async function attemptRefund(env, cfg, wallet, db, direction, key, p) {
     }
     const data = encodeFunctionData({ abi: spec.abi, functionName: spec.fn, args: spec.args });
     try {
-        const txHash = await sendTx(spec.rpcUrl, wallet, { to: spec.to, data }, cfg);
+        const txHash = await sendTx(spec.rpcUrl, wallet, { to: spec.to, data }, cfg, spec.keyLayer ?? 'base');
         if (txHash == null) {
             // 预估失败跳过（tx.js 统一收口，发前预估门）：连续失败计次，达阈值写卡死终态停试（追派二）。
             // 链上语义：B 侧已裁决终态、A 侧本金+费滞留 escrow，无资金风险，恶意 payer 自担。
