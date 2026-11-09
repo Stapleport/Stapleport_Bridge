@@ -1,0 +1,16 @@
+// 扫链/指令事件 topic0 常量别名（构建期生成，L1-1；值与原运行时 getEventSelector 计算逐字一致）。
+import {
+    DEPOSIT_TOPIC0, BURN_TOPIC0, LOCKOUT_TOPIC0, BURNOUT_TOPIC0,
+    DEPOSIT_REFUNDED_TOPIC0, RELEASE_SKIPPED_TOPIC0, OUT_MINT_REFUNDED_TOPIC0, OUT_RELEASE_SKIPPED_TOPIC0,
+} from '../lib/abi.js';
+
+// 扫链 topic0 = 构建期生成常量（L1-1，scripts/gen-abi.mjs；值与原运行时 getEventSelector 计算逐字一致）
+export const DEPOSIT_TOPIC = DEPOSIT_TOPIC0;
+export const BURN_TOPIC = BURN_TOPIC0;
+export const LOCKOUT_TOPIC = LOCKOUT_TOPIC0;
+export const BURNOUT_TOPIC = BURNOUT_TOPIC0;
+
+export const DEPOSIT_REFUNDED_TOPIC = DEPOSIT_REFUNDED_TOPIC0; // topic0 生成常量（L1-1，同上）
+export const RELEASE_SKIPPED_TOPIC = RELEASE_SKIPPED_TOPIC0;
+export const OUT_MINT_REFUNDED_TOPIC = OUT_MINT_REFUNDED_TOPIC0;
+export const OUT_RELEASE_SKIPPED_TOPIC = OUT_RELEASE_SKIPPED_TOPIC0;
