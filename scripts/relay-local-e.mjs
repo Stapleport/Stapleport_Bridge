@@ -14,7 +14,7 @@
 //     RELAY_HUB_CHAIN_ID   hub chainId（默认 31339）
 //     RELAY_HUB_RPC        hub RPC（默认 http://127.0.0.1:8547）
 //     RELAY_HUB_BUCKET     all.json 桶键（默认同 RELAY_HUB_CHAIN_ID）
-//     RELAY_CHANNEL_FILE   通道档案（默认 test-channel-<RELAY_HUB_CHAIN_ID>.json）
+//     RELAY_CHANNEL_FILE   通道档案（绝对路径原样；否则 join $HH/scripts/Token；默认 test-channel-<RELAY_HUB_CHAIN_ID>.json）
 //     RELAY_SPOKE_RPC      源链 RPC（默认 http://127.0.0.1:8546）
 //     RELAY_SRC_KEY        key 内部编号（默认 1；RPC_URL_<n> 对应）
 //
@@ -34,7 +34,7 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { mnemonicToAccount } from 'viem/accounts';
 import { loadConfig } from '../src/config.js';
@@ -63,9 +63,14 @@ const SPOKE_RPC = process.env.RELAY_SPOKE_RPC || 'http://127.0.0.1:8546';
 const SRC_KEY = process.env.RELAY_SRC_KEY || '1';
 
 const HARHAT = '/root/learn/Stapleport/Stapleport/Stapleport_hardhat';
-const st31338 = JSON.parse(readFileSync(join(HARHAT, 'scripts/Token/state-31338.json'), 'utf8'));
-const stCh = JSON.parse(readFileSync(join(HARHAT, 'scripts/Token', CHANNEL_FILE), 'utf8'));
-const allHub = JSON.parse(readFileSync(join(HARHAT, 'deployments/all.json'), 'utf8'))[HUB_BUCKET];
+// HH_DEPLOYMENTS_DIR（per-env 注入，口名同 hh_log.js/R2 十点）优先；缺省=仓内现值
+const DEPLOY_ROOT = process.env.HH_DEPLOYMENTS_DIR || join(HARHAT, 'deployments');
+// RELAY_STATE_31338（per-env 注入；vault 为地址类、env 间变量）优先；缺省=仓内现值
+const st31338 = JSON.parse(readFileSync(process.env.RELAY_STATE_31338 || join(HARHAT, 'scripts/Token/state-31338.json'), 'utf8'));
+// 绝对路径原样（per-env 注入）；文件名沿用原 join 解析——缺省=文件名时逐字节同旧行为
+const CHANNEL_PATH = isAbsolute(CHANNEL_FILE) ? CHANNEL_FILE : join(HARHAT, 'scripts/Token', CHANNEL_FILE);
+const stCh = JSON.parse(readFileSync(CHANNEL_PATH, 'utf8'));
+const allHub = JSON.parse(readFileSync(join(DEPLOY_ROOT, 'all.json'), 'utf8'))[HUB_BUCKET];
 
 // evmChainId：relayer cfg 消费 oracle（GET /gas?chainId=）需链 id 映射；来源=state-31338.json chainId
 // （deploy 清单补值，bridge-fee L2 裁决项；缺此值则 feeDomain.evmChainId=undefined → oracle chainId=null
